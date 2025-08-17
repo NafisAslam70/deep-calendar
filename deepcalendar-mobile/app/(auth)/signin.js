@@ -1,61 +1,70 @@
 import React, { useState } from "react";
-import { Pressable, Text, TextInput, View } from "react-native";
+import { View, Text, TextInput, Pressable } from "react-native";
 import { useRouter } from "expo-router";
 import { useAuth } from "../../lib/auth";
+import { DEFAULT_API_BASE } from "../../lib/config";
+
+function Btn({ title, onPress }) {
+  return (
+    <Pressable onPress={onPress} style={{ backgroundColor: "#111827", padding: 12, borderRadius: 10 }}>
+      <Text style={{ color: "white", fontWeight: "700", textAlign: "center" }}>{title}</Text>
+    </Pressable>
+  );
+}
 
 export default function SignIn() {
-  const { signIn } = useAuth();
   const router = useRouter();
+  const { signIn, setBase, base } = useAuth();
+
+  // 👇 default to deployed Vercel API instead of localhost
+  const [server, setServer] = useState(base || DEFAULT_API_BASE);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
-  const [loading, setLoading] = useState(false);
 
   async function onSubmit() {
     setErr("");
-    setLoading(true);
     try {
-      await signIn(email.trim(), password);
-      router.replace("/dashboard");
+      await setBase(server);
+      await signIn(email.trim().toLowerCase(), password);
+      router.replace("/(tabs)/dashboard");
     } catch (e) {
-      setErr(e.message || "Sign-in failed");
-    } finally {
-      setLoading(false);
+      setErr(e?.message || "Sign-in failed");
     }
   }
 
   return (
     <View style={{ flex: 1, padding: 16, gap: 12 }}>
-      <Text style={{ fontSize: 22, fontWeight: "700", textAlign: "center", marginVertical: 12 }}>
-        Welcome back
-      </Text>
+      <Text style={{ fontSize: 22, fontWeight: "800" }}>Sign in</Text>
+
+      <Text style={{ color: "#6b7280", fontSize: 12 }}>DeepCalendar server</Text>
+      <TextInput
+        value={server}
+        onChangeText={setServer}
+        autoCapitalize="none"
+        inputMode="url"
+        style={{ borderWidth: 1, borderColor: "#e5e7eb", borderRadius: 10, padding: 10 }}
+        placeholder={DEFAULT_API_BASE}
+      />
 
       <TextInput
         placeholder="Email"
-        autoCapitalize="none"
-        keyboardType="email-address"
         value={email}
         onChangeText={setEmail}
-        style={{ borderWidth: 1, borderColor: "#e5e7eb", borderRadius: 10, padding: 12 }}
+        autoCapitalize="none"
+        inputMode="email"
+        style={{ borderWidth: 1, borderColor: "#e5e7eb", borderRadius: 10, padding: 10 }}
       />
       <TextInput
         placeholder="Password"
-        secureTextEntry
         value={password}
         onChangeText={setPassword}
-        style={{ borderWidth: 1, borderColor: "#e5e7eb", borderRadius: 10, padding: 12 }}
+        secureTextEntry
+        style={{ borderWidth: 1, borderColor: "#e5e7eb", borderRadius: 10, padding: 10 }}
       />
-      {!!err && <Text style={{ color: "#dc2626" }}>{err}</Text>}
 
-      <Pressable
-        onPress={onSubmit}
-        disabled={loading}
-        style={{ backgroundColor: loading ? "#9ca3af" : "black", padding: 14, borderRadius: 10 }}
-      >
-        <Text style={{ color: "white", fontWeight: "600", textAlign: "center" }}>
-          {loading ? "Signing in…" : "Sign in"}
-        </Text>
-      </Pressable>
+      {err ? <Text style={{ color: "#dc2626" }}>{err}</Text> : null}
+      <Btn title="Sign in" onPress={onSubmit} />
     </View>
   );
 }

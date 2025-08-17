@@ -1,11 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 
 /* Types */
 type AuthState = "loading" | "authed" | "anon";
 type Depth = 1 | 2 | 3;
-type Goal = { id: number; label: string; color: string; deadlineISO?: string | null };
+type Goal = {
+  id: number;
+  label: string;
+  color: string;
+  deadlineISO?: string | null;
+};
 type RoutineWindow = { openMin: number; closeMin: number } | null;
 type DraftSprint = { s: number; e: number };
 type DraftBreak = { s: number; e: number };
@@ -20,6 +25,14 @@ type DraftGroup = {
   breaks: DraftBreak[];
   days: number[];
 };
+type RoutineItem = {
+  id: number;
+  startMin: number;
+  endMin: number;
+  depthLevel: 1 | 2 | 3;
+  goalId: number;
+  label?: string | null;
+};
 
 /* Utils */
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
@@ -28,7 +41,8 @@ const toMinutes = (t: string) => {
   return h * 60 + m;
 };
 const pad = (n: number) => String(n).padStart(2, "0");
-const fromMinutes = (m: number) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
+const fromMinutes = (m: number) =>
+  `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
 const overlaps = (aS: number, aE: number, bS: number, bE: number) =>
   Math.max(aS, bS) < Math.min(aE, bE);
 
@@ -37,7 +51,7 @@ async function apiJson(input: RequestInfo, init?: RequestInit) {
   const j = r.headers.get("content-type")?.includes("application/json")
     ? await r.json().catch(() => ({}))
     : {};
-  return { ok: r.ok, status: r.status, json: j };
+  return { ok: r.ok, status: r.status, json: j as any };
 }
 
 /* Confirm dialog */
@@ -112,51 +126,44 @@ export default function RoutinePage() {
   const [windowsByDay, setWindowsByDay] = useState<Record<number, RoutineWindow>>(
     {}
   );
-  const [existingByDay, setExistingByDay] = useState<
-    Record<
-      number,
-      Array<{
-        id: number;
-        startMin: number;
-        endMin: number;
-        depthLevel: 1 | 2 | 3;
-        goalId: number;
-        label?: string | null;
-      }>
-    >
-  >({});
+  const [existingByDay, setExistingByDay] = useState<Record<number, RoutineItem[]>>(
+    {}
+  );
 
   async function loadGoals() {
     const { ok, json } = await apiJson("/api/deepcal/goals");
     if (ok) setGoals(json.goals ?? []);
   }
 
-  async function loadAllRoutine() {
+  const loadAllRoutine = useCallback(async () => {
     const results = await Promise.all(
-      [0, 1, 2, 3, 4, 5, 6].map((d) => apiJson(`/api/deepcal/routine?weekday=${d}`))
+      [0, 1, 2, 3, 4, 5, 6].map((d) =>
+        apiJson(`/api/deepcal/routine?weekday=${d}`)
+      )
     );
     const wmap: typeof windowsByDay = {};
     const emap: typeof existingByDay = {};
     results.forEach((res, idx) => {
       if (res.ok) {
-        wmap[idx] = res.json.window ?? null;
-        emap[idx] = (res.json.items ?? []).sort(
-          (a: any, b: any) => a.startMin - b.startMin
-        );
+        wmap[idx] = (res.json.window ?? null) as RoutineWindow;
+        const items = ((res.json.items ?? []) as RoutineItem[])
+          .slice()
+          .sort((a, b) => a.startMin - b.startMin);
+        emap[idx] = items;
       }
     });
     setWindowsByDay(wmap);
     setExistingByDay(emap);
-  }
+  }, []);
 
   useEffect(() => {
     if (authState === "authed") {
       loadGoals();
       loadAllRoutine();
     }
-  }, [authState]);
+  }, [authState, loadAllRoutine]);
 
-  /* ---------------- finalize flag (preserve original feature) ---------------- */
+  /* ---------------- finalize flag ---------------- */
   const FINALIZE_KEY = "deepcal_routine_finalized";
   const [finalizedFlag, setFinalizedFlagState] = useState<boolean>(false);
   useEffect(() => {
@@ -168,10 +175,11 @@ export default function RoutinePage() {
     setFinalizedFlagState(v);
   }
 
-  // compute server-side presence: routine considered "set" if any day has items OR window
   const serverHasRoutine = useMemo(() => {
     const anyWindow = Object.values(windowsByDay).some((w) => !!w);
-    const anyItems = Object.values(existingByDay).some((arr) => (arr?.length ?? 0) > 0);
+    const anyItems = Object.values(existingByDay).some(
+      (arr) => (arr?.length ?? 0) > 0
+    );
     return anyWindow || anyItems;
   }, [windowsByDay, existingByDay]);
 
@@ -214,7 +222,7 @@ export default function RoutinePage() {
       closeMin = toMinutes(windowClose);
     if (!(days.length && openMin < closeMin)) return;
 
-    // confirmation modal (preserve feature)
+    // confirmation modal
     askConfirm({
       title: "Apply day window?",
       body: `Set ${fromMinutes(openMin)}–${fromMinutes(
@@ -250,11 +258,14 @@ export default function RoutinePage() {
       window:
         key === "none"
           ? null
-          : { openMin: Number(key.split("-")[0]), closeMin: Number(key.split("-")[1]) },
+          : {
+              openMin: Number(key.split("-")[0]),
+              closeMin: Number(key.split("-")[1]),
+            },
     }));
   }, [windowsByDay]);
 
-  /* ---------------- composer: block + breaks → sprints ---------------- */
+  /* ---------------- composer ---------------- */
   const [bLabel, setBLabel] = useState("");
   const [bStart, setBStart] = useState("09:00");
   const [bEnd, setBEnd] = useState("13:00");
@@ -306,14 +317,12 @@ export default function RoutinePage() {
   }
 
   function composeSprints(blockS: number, blockE: number, breaks: DraftBreak[]) {
-    // merge overlapping breaks
     const merged: DraftBreak[] = [];
     for (const br of [...breaks].sort((a, b) => a.s - b.s)) {
       if (!merged.length || br.s > merged[merged.length - 1].e)
         merged.push({ ...br });
       else merged[merged.length - 1].e = Math.max(merged[merged.length - 1].e, br.e);
     }
-    // create sprints
     const sprints: DraftSprint[] = [];
     let cur = blockS;
     for (const br of merged) {
@@ -399,7 +408,7 @@ export default function RoutinePage() {
       return;
     }
 
-    // pre-warn for conflicts against existing items & windows (feature retained)
+    // warnings
     const warnings: React.ReactNode[] = [];
     for (const d of days) {
       const win = windowsByDay[d];
@@ -516,15 +525,19 @@ export default function RoutinePage() {
       return;
     }
 
-    // build conflict list for modal (preserve feature)
+    // conflicts preview
     const conflicts: Array<{
       weekday: number;
       overlaps: Array<{ s: number; e: number; existLabel?: string | null; label?: string }>;
     }> = [];
     for (const [wd, items] of byDay.entries()) {
       const ex = existingByDay[wd] ?? [];
-      const list: Array<{ s: number; e: number; existLabel?: string | null; label?: string }> =
-        [];
+      const list: Array<{
+        s: number;
+        e: number;
+        existLabel?: string | null;
+        label?: string;
+      }> = [];
       for (const ni of items)
         for (const ei of ex)
           if (overlaps(ni.startMin, ni.endMin, ei.startMin, ei.endMin))
@@ -565,7 +578,8 @@ export default function RoutinePage() {
                 <ul className="mt-1 list-disc pl-5 text-sm">
                   {c.overlaps.map((o, j) => (
                     <li key={j}>
-                      {fromMinutes(o.s)}–{fromMinutes(o.e)} • new: {o.label || "block"}
+                      {fromMinutes(o.s)}–{fromMinutes(o.e)} • new:{" "}
+                      {o.label || "block"}
                       {o.existLabel ? ` • existing: ${o.existLabel}` : ""}
                     </li>
                   ))}
@@ -629,7 +643,7 @@ export default function RoutinePage() {
         </p>
       </div>
 
-      {/* Finalize / Modify — keeps original feature, but shows status from server too */}
+      {/* Finalize / Modify */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <span
           className={`w-fit rounded-full px-2 py-1 text-xs ${
@@ -689,7 +703,12 @@ export default function RoutinePage() {
               {WEEKDAYS.map((w, i) => (
                 <button
                   key={w}
-                  onClick={() => setWindowDays((s) => ({ ...s, [i]: !s[i] }))}
+                  onClick={() =>
+                    setWindowDays((s) => ({
+                      ...s,
+                      [i]: !s[i],
+                    }))
+                  }
                   className={`rounded-lg px-3 py-1.5 text-sm ring-1 ring-gray-200 ${
                     windowDays[i] ? "bg-black text-white" : "bg-white"
                   }`}
@@ -761,7 +780,9 @@ export default function RoutinePage() {
                   <button
                     className="w-full rounded-lg border px-2 py-1 text-xs sm:w-auto"
                     onClick={() => {
-                      setWindowOpen(g.window ? fromMinutes(g.window.openMin) : "09:00");
+                      setWindowOpen(
+                        g.window ? fromMinutes(g.window.openMin) : "09:00"
+                      );
                       setWindowClose(
                         g.window ? fromMinutes(g.window.closeMin) : "18:00"
                       );
@@ -1039,7 +1060,9 @@ export default function RoutinePage() {
 
                   <div className="mt-3 grid gap-2 sm:grid-cols-2">
                     <div>
-                      <div className="text-xs font-semibold text-gray-600">Sprints</div>
+                      <div className="text-xs font-semibold text-gray-600">
+                        Sprints
+                      </div>
                       <ul className="mt-1 space-y-1 text-sm">
                         {g.sprints.map((sp, i) => (
                           <li key={i} className="rounded border px-2 py-1">
@@ -1049,7 +1072,9 @@ export default function RoutinePage() {
                       </ul>
                     </div>
                     <div>
-                      <div className="text-xs font-semibold text-gray-600">Breaks</div>
+                      <div className="text-xs font-semibold text-gray-600">
+                        Breaks
+                      </div>
                       {g.breaks.length === 0 ? (
                         <div className="mt-1 text-sm text-gray-500">No breaks</div>
                       ) : (

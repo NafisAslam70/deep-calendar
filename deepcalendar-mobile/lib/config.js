@@ -1,24 +1,25 @@
-// Single place to point the mobile app at your web API.
-// Set EXPO_PUBLIC_API_BASE in app.json or .env for device testing.
-// Fallback keeps dev happy on iOS simulator.
-// export const API_BASE =
-//   (process.env.EXPO_PUBLIC_API_BASE || "http://localhost:3001").replace(/\/$/, "");
-
 // lib/config.js
-export const DEFAULT_API_BASE =
-  "https://deep-calendar-aoly14e7i-nafisaslam70-gmailcoms-projects.vercel.app";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
-export const StorageKeys = {
-  token: "dc_token",
-  apiBase: "dc_api_base",
-};
+export const DEFAULT_API_BASE = "https://deep-calendar.vercel.app";
+const KEY_BASE = "dc_base";
 
-export function withBase(base, path) {
-  const b = (base || DEFAULT_API_BASE).replace(/\/+$/, "");
-  const p = path.startsWith("/") ? path : `/${path}`;
-  return `${b}${p}`;
+export async function getApiBase() {
+  try {
+    const raw = (await AsyncStorage.getItem(KEY_BASE)) || DEFAULT_API_BASE;
+    const trimmed = raw.trim().replace(/\/+$/, "");
+    // if someone types just "deep-calendar.vercel.app", fix it:
+    return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  } catch {
+    return DEFAULT_API_BASE;
+  }
 }
 
-
-
-  
+export async function setApiBase(v) {
+  try {
+    const cleaned = (v || "").trim().replace(/\/+$/, "");
+    await AsyncStorage.setItem(KEY_BASE, cleaned || DEFAULT_API_BASE);
+  } catch {
+    // ignore
+  }
+}

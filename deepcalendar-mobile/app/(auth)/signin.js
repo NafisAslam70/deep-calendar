@@ -1,35 +1,30 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { View, Text, TextInput, Pressable } from "react-native";
 import { useRouter } from "expo-router";
 import { useAuth } from "../../lib/auth";
-import { DEFAULT_API_BASE } from "../../lib/config";
-
-function Btn({ title, onPress }) {
-  return (
-    <Pressable onPress={onPress} style={{ backgroundColor: "#111827", padding: 12, borderRadius: 10 }}>
-      <Text style={{ color: "white", fontWeight: "700", textAlign: "center" }}>{title}</Text>
-    </Pressable>
-  );
-}
+import { getApiBase, setApiBase, DEFAULT_API_BASE } from "../../lib/config";
 
 export default function SignIn() {
   const router = useRouter();
-  const { signIn, setBase, base } = useAuth();
+  const { signIn } = useAuth();
 
-  // 👇 default to deployed Vercel API instead of localhost
-  const [server, setServer] = useState(base || DEFAULT_API_BASE);
+  const [server, setServer] = useState(DEFAULT_API_BASE);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
 
+  useEffect(() => {
+    getApiBase().then((b) => b && setServer(b));
+  }, []);
+
   async function onSubmit() {
     setErr("");
     try {
-      await setBase(server);
+      await setApiBase(server);
       await signIn(email.trim().toLowerCase(), password);
       router.replace("/(tabs)/dashboard");
     } catch (e) {
-      setErr(e?.message || "Sign-in failed");
+      setErr((e && e.message) || "Sign-in failed");
     }
   }
 
@@ -42,9 +37,8 @@ export default function SignIn() {
         value={server}
         onChangeText={setServer}
         autoCapitalize="none"
-        inputMode="url"
+        autoCorrect={false}
         style={{ borderWidth: 1, borderColor: "#e5e7eb", borderRadius: 10, padding: 10 }}
-        placeholder={DEFAULT_API_BASE}
       />
 
       <TextInput
@@ -52,7 +46,7 @@ export default function SignIn() {
         value={email}
         onChangeText={setEmail}
         autoCapitalize="none"
-        inputMode="email"
+        autoCorrect={false}
         style={{ borderWidth: 1, borderColor: "#e5e7eb", borderRadius: 10, padding: 10 }}
       />
       <TextInput
@@ -64,7 +58,10 @@ export default function SignIn() {
       />
 
       {err ? <Text style={{ color: "#dc2626" }}>{err}</Text> : null}
-      <Btn title="Sign in" onPress={onSubmit} />
+
+      <Pressable onPress={onSubmit} style={{ backgroundColor: "#111827", padding: 12, borderRadius: 10 }}>
+        <Text style={{ color: "white", fontWeight: "700", textAlign: "center" }}>Sign in</Text>
+      </Pressable>
     </View>
   );
 }

@@ -1,15 +1,23 @@
-import { Slot, Redirect, usePathname, useSegments } from "expo-router";
-import React from "react";
+import { Slot, usePathname, useRouter, useSegments } from "expo-router";
+import React, { useEffect } from "react";
+import { View, ActivityIndicator } from "react-native";
 import { AuthProvider, useAuth } from "../lib/auth";
-import { ActivityIndicator, View } from "react-native";
 
-/** Gate redirects, but WITHOUT useEffect/router.replace */
 function NavigationGate() {
+  const router = useRouter();
   const segments = useSegments();
   const pathname = usePathname();
   const { user, loading } = useAuth();
-
   const inAuthGroup = segments[0] === "(auth)";
+
+  useEffect(() => {
+    if (loading) return;
+    if (!user && !inAuthGroup) {
+      if (pathname !== "/signin") router.replace("/signin");
+    } else if (user && inAuthGroup) {
+      if (pathname !== "/(tabs)/dashboard") router.replace("/(tabs)/dashboard");
+    }
+  }, [user, loading, inAuthGroup, pathname, router]);
 
   if (loading) {
     return (
@@ -18,15 +26,6 @@ function NavigationGate() {
       </View>
     );
   }
-
-  // Declarative redirects (safe at first render)
-  if (!user && !inAuthGroup && pathname !== "/signin") {
-    return <Redirect href="/signin" />;
-  }
-  if (user && inAuthGroup && pathname !== "/(tabs)/dashboard") {
-    return <Redirect href="/(tabs)/dashboard" />;
-  }
-
   return <Slot />;
 }
 

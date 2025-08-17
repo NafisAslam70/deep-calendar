@@ -1,109 +1,98 @@
 // lib/auth.js
-import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from "react";
+import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { DEFAULT_API_BASE, StorageKeys, withBase } from "./config";
+import { getApiBase, setApiBase as persistBase, DEFAULT_API_BASE } from "./config";
 
-/** tiny fetch helper that auto-attaches Authorization if token present */
-async function fetchJson(path, { method = "GET", headers = {}, body, token, base } = {}) {
-  const url = withBase(base, path);
-  const h = {
-    "Content-Type": "application/json",
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...headers,
-  };
-  const res = await fetch(url, { method, headers: h, body });
+
+const KEY_TOKEN = "dc_token";
+
+const AuthCtx = createContext({
+  user: null,
+  token: null,
+  loading: true,
+  signIn: async (_email, _password) => {},
+  signOut: async () => {},
+});
+
+/** Safe JSON fetch that respects the dynamic API base + bearer token */
+async function fetchJson(path, { method = "GET", body, token, headers } = {}) {
+  const base = await getApiBase();
+  const url = `${base}${path.startsWith("/") ? path : `/${path}`}`;
+
+  const res = await fetch(url, {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      ...(headers || {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
   const isJson = res.headers.get("content-type")?.includes("application/json");
   const json = isJson ? await res.json().catch(() => ({})) : {};
   return { ok: res.ok, status: res.status, json };
 }
 
-const AuthCtx = createContext(null);
-
 export function AuthProvider({ children }) {
-  const [token, setToken] = useState(null);
-  const [base, setBase] = useState(DEFAULT_API_BASE); // default to Vercel prod
-  const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [token, setToken]   = useState(null);
+  const [user, setUser]     = useState(null);
 
-  // boot: load saved base + token
+  // bootstrap: read token, validate, load /me
   useEffect(() => {
     (async () => {
       try {
-        const [savedBase, savedToken] = await Promise.all([
-          AsyncStorage.getItem(StorageKeys.apiBase),
-          AsyncStorage.getItem(StorageKeys.token),
-        ]);
-        if (savedBase) setBase(savedBase);
-        if (savedToken) setToken(savedToken);
+        await getApiBase(); // ensures base exists (and normalizes it)
+        const t = await AsyncStorage.getItem(KEY_TOKEN);
+        setToken(t || null);
+
+        if (t) {
+          const me = await fetchJson("/api/auth/me", { token: t });
+          if (me.ok) setUser(me.json.user || { id: me.json.id, email: me.json.email });
+          else setUser(null);
+        } else {
+          setUser(null);
+        }
       } finally {
         setLoading(false);
       }
     })();
   }, []);
 
-  // whoami when token changes
-  useEffect(() => {
-    if (!token) {
-      setUser(null);
-      return;
-    }
-    (async () => {
-      const r = await fetchJson("/api/auth/me", { token, base });
-      if (r.ok) setUser(r.json.user || null);
-      else setUser(null);
-    })();
-  }, [token, base]);
+  async function signIn(email, password) {
+    const r = await fetchJson("/api/auth/signin", {
+      method: "POST",
+      body: { email, password },
+    });
+    if (!r.ok) throw new Error(r.json?.error || "Invalid credentials");
 
-  const signIn = useCallback(
-    async (email, password) => {
-      const r = await fetchJson("/api/auth/signin", {
-        method: "POST",
-        body: JSON.stringify({ email, password }),
-        base,
-      });
-      if (!r.ok) throw new Error(r.json?.error || "Sign-in failed");
-      const tok = r.json?.token;
-      const u = r.json?.user || null;
-      if (!tok) throw new Error("No token returned");
-      setToken(tok);
-      setUser(u);
-      await AsyncStorage.setItem(StorageKeys.token, tok);
-      return u;
-    },
-    [base]
-  );
+    const tok = r.json?.token;
+    if (!tok) throw new Error("No token returned by server");
 
-  const signOut = useCallback(async () => {
+    await AsyncStorage.setItem(KEY_TOKEN, tok);
+    setToken(tok);
+
+    const me = await fetchJson("/api/auth/me", { token: tok });
+    if (me.ok) setUser(me.json.user || { id: me.json.id, email: me.json.email });
+
+    return true;
+  }
+
+  async function signOut() {
+    await AsyncStorage.removeItem(KEY_TOKEN);
     setToken(null);
     setUser(null);
-    await AsyncStorage.removeItem(StorageKeys.token);
-  }, []);
+  }
 
-  const updateBase = useCallback(async (nextBase) => {
-    const clean = (nextBase || DEFAULT_API_BASE).replace(/\/+$/, "");
-    setBase(clean);
-    await AsyncStorage.setItem(StorageKeys.apiBase, clean);
-  }, []);
-
-  const value = useMemo(
-    () => ({
-      user,
-      token,
-      base,
-      loading,
-      signIn,
-      signOut,
-      setBase: updateBase,
-      fetchJson: (path, opts = {}) => fetchJson(path, { ...opts, token, base }),
-    }),
-    [user, token, base, loading, signIn, signOut, updateBase]
-  );
+  const value = useMemo(() => ({ loading, user, token, signIn, signOut }), [loading, user, token]);
 
   return <AuthCtx.Provider value={value}>{children}</AuthCtx.Provider>;
 }
 
 export function useAuth() {
-  const ctx = useContext(AuthCtx);
-  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
-  return ctx;
+  return useContext(AuthCtx);
 }
+
+// (optional) re-export if other screens import it from here
+export { fetchJson };

@@ -1,60 +1,55 @@
-// Super-thin API client used across screens.
+// lib/api.js
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { getApiBase } from "./config";
 
-const DEFAULT_BASE = "http://localhost:3001";
+const KEY_TOKEN = "dc_token";
 
-let state = {
-  base: DEFAULT_BASE,
-  token: null,
-};
-
-export function setBase(url) {
-  state.base = (url || DEFAULT_BASE).replace(/\/+$/, "");
-  try { if (typeof localStorage !== "undefined") localStorage.setItem("dc_base", state.base); } catch {}
+export async function getToken() {
+  try { return (await AsyncStorage.getItem(KEY_TOKEN)) || null; } catch { return null; }
+}
+export async function setToken(t) {
+  try { await AsyncStorage.setItem(KEY_TOKEN, t || ""); } catch {}
 }
 
-export function getBase() {
-  if (state.base) return state.base;
-  try { const v = localStorage.getItem("dc_base"); if (v) state.base = v; } catch {}
-  return state.base || DEFAULT_BASE;
-}
+export async function request(path, opts = {}) {
+  const { method = "GET", body, headers, token } = opts;
+  const base = await getApiBase();
+  const t = token ?? (await getToken());
+  const url = `${base}${path.startsWith("/") ? path : `/${path}`}`;
 
-export function setToken(tok) {
-  state.token = tok || null;
-  try { if (typeof localStorage !== "undefined") localStorage.setItem("dc_token", state.token || ""); } catch {}
-}
-export function getToken() {
-  if (state.token) return state.token;
   try {
-    if (typeof localStorage !== "undefined") {
-      const v = localStorage.getItem("dc_token");
-      if (v) state.token = v;
-    }
-  } catch {}
-  return state.token;
-}
+    const res = await fetch(url, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        ...(headers || {}),
+        ...(t ? { Authorization: `Bearer ${t}` } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      credentials: "include", // ensure cookies (Next.js sets dc_token cookie)
+    });
 
-async function req(method, path, body) {
-  const base = getBase();
-  const headers = { "Content-Type": "application/json" };
-  const token = getToken();
-  if (token) headers.Authorization = `Bearer ${token}`;
-  const r = await fetch(`${base}${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const isJson = r.headers.get("content-type")?.includes("application/json");
-  const data = isJson ? await r.json().catch(() => ({})) : {};
-  if (!r.ok) {
-    const msg = data?.error || `${r.status} ${r.statusText}`;
-    throw new Error(msg);
+    const ct = res.headers.get("content-type") || "";
+    const json = ct.includes("application/json") ? await res.json().catch(() => ({})) : {};
+
+    if (!res.ok) {
+      const msg = json?.error || `${res.status} ${res.statusText}`;
+      const err = new Error(msg);
+      err.status = res.status;
+      err.json = json;
+      throw err;
+    }
+    return json;
+  } catch (e) {
+    // 🔎 temporary debug: see exactly what we tried to call
+    console.log("request() network error ->", url, String(e?.message || e));
+    throw e;
   }
-  return data;
 }
 
 export const api = {
-  get: (p) => req("GET", p),
-  post: (p, b) => req("POST", p, b),
-  patch: (p, b) => req("PATCH", p, b),
-  del: (p) => req("DELETE", p),
+  get: (p, o) => request(p, { ...(o || {}), method: "GET" }),
+  post: (p, b, o) => request(p, { ...(o || {}), method: "POST", body: b }),
+  patch: (p, b, o) => request(p, { ...(o || {}), method: "PATCH", body: b }),
+  del: (p, o) => request(p, { ...(o || {}), method: "DELETE" }),
 };

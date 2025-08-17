@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 
 /* Types */
@@ -8,17 +8,30 @@ type AuthState = "loading" | "authed" | "anon";
 type Depth = 1 | 2 | 3;
 type RoutineWindow = { openMin: number; closeMin: number } | null;
 
+type RoutineItem = {
+  id: number;
+  startMin: number;
+  endMin: number;
+  depthLevel: Depth;
+  label?: string | null;
+};
+type RoutineResponse = {
+  window: RoutineWindow;
+  items: RoutineItem[];
+};
+
+type ApiResp<T> = { ok: boolean; status: number; json: T };
+async function apiJson<T>(input: RequestInfo, init?: RequestInit): Promise<ApiResp<T>> {
+  const r = await fetch(input, init);
+  const isJson = r.headers.get("content-type")?.includes("application/json");
+  const j = (isJson ? await r.json().catch(() => ({})) : {}) as T;
+  return { ok: r.ok, status: r.status, json: j };
+}
+
 /* Utils */
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 const pad = (n: number) => String(n).padStart(2, "0");
 const fromMinutes = (m: number) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
-async function apiJson(input: RequestInfo, init?: RequestInit) {
-  const r = await fetch(input, init);
-  const j = r.headers.get("content-type")?.includes("application/json")
-    ? await r.json().catch(() => ({}))
-    : {};
-  return { ok: r.ok, status: r.status, json: j };
-}
 function depthColors(d: Depth) {
   if (d === 3) return { border: "#6366f1", bg: "#6366f126", label: "L3 Deep" };
   if (d === 2) return { border: "#0ea5e9", bg: "#0ea5e926", label: "L2 Medium" };
@@ -34,35 +47,30 @@ export default function DeepCalendarPage() {
   const [authState, setAuthState] = useState<AuthState>("loading");
 
   const [windowsByDay, setWindowsByDay] = useState<Record<number, RoutineWindow>>({});
-  const [routineByDay, setRoutineByDay] = useState<
-    Record<number, Array<{ id: number; startMin: number; endMin: number; depthLevel: Depth; label?: string | null }>>
-  >({});
+  const [routineByDay, setRoutineByDay] = useState<Record<number, RoutineItem[]>>({});
 
   useEffect(() => {
     if (authState === "anon")
       router.replace(`/auth/signin?next=${encodeURIComponent("/deep-calendar")}`);
   }, [authState, router]);
 
-  async function loadAllRoutine() {
+  const loadAllRoutine = useCallback(async () => {
     const results = await Promise.all(
-      [0, 1, 2, 3, 4, 5, 6].map((d) => apiJson(`/api/deepcal/routine?weekday=${d}`))
+      [0, 1, 2, 3, 4, 5, 6].map((d) =>
+        apiJson<RoutineResponse>(`/api/deepcal/routine?weekday=${d}`)
+      )
     );
-    const rmap: typeof routineByDay = {};
-    const wmap: typeof windowsByDay = {};
+    const rmap: Record<number, RoutineItem[]> = {};
+    const wmap: Record<number, RoutineWindow> = {};
     let any401 = false,
       anyOk = false;
+
     results.forEach((res, idx) => {
       if (res.ok) {
         anyOk = true;
         const items = (res.json.items ?? [])
-          .sort((a: any, b: any) => a.startMin - b.startMin)
-          .map((x: any) => ({
-            id: x.id,
-            startMin: x.startMin,
-            endMin: x.endMin,
-            depthLevel: x.depthLevel as Depth,
-            label: x.label ?? null,
-          }));
+          .slice()
+          .sort((a, b) => a.startMin - b.startMin);
         rmap[idx] = items;
         wmap[idx] = res.json.window ?? null;
       } else if (res.status === 401) any401 = true;
@@ -71,10 +79,11 @@ export default function DeepCalendarPage() {
     else if (any401) setAuthState("anon");
     setRoutineByDay(rmap);
     setWindowsByDay(wmap);
-  }
-  useEffect(() => {
-    loadAllRoutine();
   }, []);
+
+  useEffect(() => {
+    void loadAllRoutine();
+  }, [loadAllRoutine]);
 
   // Group identical windows to reduce redundancy summary
   const groupedWindows = useMemo(() => {
@@ -134,7 +143,7 @@ export default function DeepCalendarPage() {
     return weeklyRange;
   }, [windowsByDay, dayMobile, weeklyRange]);
 
-  const pxPerMinMobile = 1.0; // a bit taller on mobile for readability
+  const pxPerMinMobile = 1.0;
   const mobileHeight = Math.max(200, (dayRange.end - dayRange.start) * pxPerMinMobile);
   const mobileTicks = useMemo(() => {
     const arr: number[] = [];
@@ -238,7 +247,7 @@ export default function DeepCalendarPage() {
                 <div
                   className="absolute left-0 right-0 rounded-sm"
                   style={{
-                    top: Math.max(0, ((windowsByDay[dayMobile]!.openMin - dayRange.start) * pxPerMinMobile)),
+                    top: Math.max(0, (windowsByDay[dayMobile]!.openMin - dayRange.start) * pxPerMinMobile),
                     height: Math.max(
                       0,
                       (windowsByDay[dayMobile]!.closeMin - windowsByDay[dayMobile]!.openMin) * pxPerMinMobile
@@ -335,14 +344,7 @@ export default function DeepCalendarPage() {
             {/* days */}
             {WEEKDAYS.map((w, day) => {
               const win = windowsByDay[day];
-              const items =
-                (routineByDay[day] ?? []) as Array<{
-                  id: number;
-                  startMin: number;
-                  endMin: number;
-                  depthLevel: Depth;
-                  label?: string | null;
-                }>;
+              const items = (routineByDay[day] ?? []) as RoutineItem[];
 
               const showNow =
                 day === todayIdx &&

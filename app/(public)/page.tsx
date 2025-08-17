@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 /* ---------- Types ---------- */
@@ -42,16 +42,14 @@ const nowMinutes = () => {
 const fromMinutes = (m: number) =>
   `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
 const fmtHM = (ms: number) =>
-  new Date(ms).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-async function apiJson(input: RequestInfo, init?: RequestInit) {
+  new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+type ApiResp<T> = { ok: boolean; status: number; json: T };
+async function apiJson<T>(input: RequestInfo, init?: RequestInit): Promise<ApiResp<T>> {
   const r = await fetch(input, init);
-  const j = r.headers.get("content-type")?.includes("application/json")
-    ? await r.json().catch(() => ({}))
-    : {};
-  return { ok: r.ok, status: r.status, json: j as any };
+  const isJson = r.headers.get("content-type")?.includes("application/json");
+  const j = (isJson ? await r.json().catch(() => ({})) : {}) as T;
+  return { ok: r.ok, status: r.status, json: j };
 }
 
 /* small pill */
@@ -118,7 +116,7 @@ export default function DashboardPage() {
   const [auth, setAuth] = useState<AuthState>("loading");
   useEffect(() => {
     (async () => {
-      const r = await apiJson("/api/auth/me");
+      const r = await apiJson<Record<string, unknown>>("/api/auth/me");
       if (r.ok) setAuth("authed");
       else setAuth("anon");
     })();
@@ -150,27 +148,29 @@ export default function DashboardPage() {
   const weekday = new Date().getDay(); // 0..6
 
   const loadGoals = useCallback(async () => {
-    const r = await apiJson("/api/deepcal/goals");
+    const r = await apiJson<{ goals: Goal[] }>("/api/deepcal/goals");
     if (r.ok) setGoals(r.json.goals ?? []);
   }, []);
 
   const loadWindow = useCallback(async () => {
-    const r = await apiJson(`/api/deepcal/routine?weekday=${weekday}`);
+    const r = await apiJson<{ window: RoutineWindow }>(
+      `/api/deepcal/routine?weekday=${weekday}`
+    );
     if (r.ok) setWindowToday(r.json.window ?? null);
   }, [weekday]);
 
   const loadDay = useCallback(async () => {
-    const r = await apiJson(
+    const r = await apiJson<{ pack: DayPack | null }>(
       `/api/deepcal/day?date=${encodeURIComponent(date)}`
     );
-    setPack(r.ok ? (r.json.pack ?? null) : null);
+    setPack(r.ok ? r.json.pack ?? null : null);
   }, [date]);
 
   useEffect(() => {
     if (auth === "authed") {
-      loadGoals();
-      loadWindow();
-      loadDay();
+      void loadGoals();
+      void loadWindow();
+      void loadDay();
     }
   }, [auth, loadGoals, loadWindow, loadDay]);
 
@@ -201,7 +201,7 @@ export default function DashboardPage() {
   }, [windowToday, nowMin]);
 
   const goalMap = useMemo(
-    () => Object.fromEntries(goals.map((g) => [g.id, g])),
+    () => Object.fromEntries(goals.map((g) => [g.id, g] as const)),
     [goals]
   );
 
@@ -214,7 +214,7 @@ export default function DashboardPage() {
   // Open Day
   async function openDay() {
     setLoading(true);
-    const r = await apiJson(
+    const r = await apiJson<{ pack: DayPack | null }>(
       `/api/deepcal/day?date=${encodeURIComponent(date)}&autocreate=true`
     );
     setLoading(false);
@@ -223,11 +223,14 @@ export default function DashboardPage() {
 
   // Update block status
   async function updateStatus(b: Block, status: Block["status"]) {
-    const r = await apiJson(`/api/deepcal/blocks?id=${b.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status }),
-    });
+    const r = await apiJson<Record<string, unknown>>(
+      `/api/deepcal/blocks?id=${b.id}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      }
+    );
     if (r.ok && pack) {
       setPack({
         ...pack,
@@ -264,14 +267,17 @@ export default function DashboardPage() {
         body: <div className="text-sm">This will store today’s report.</div>,
         confirmText: "Close day",
         onConfirm: async () => {
-          const r = await apiJson("/api/deepcal/day/shutdown", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              dateISO: pack.dateISO,
-              journal: body,
-            }),
-          });
+          const r = await apiJson<Record<string, unknown>>(
+            "/api/deepcal/day/shutdown",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                dateISO: pack.dateISO,
+                journal: body,
+              }),
+            }
+          );
           resolve(r.ok);
           setConfirmOpen(false);
         },
@@ -321,7 +327,7 @@ export default function DashboardPage() {
       <div>
         <h1 className="text-2xl font-bold">Dashboard</h1>
         <p className="text-sm text-gray-600">
-          Your day at a glance • {WEEKDAYS[new Date().getDay()]}, {date}
+          Your day at a glance • {WEEKDAYS[new Date().getDay()]}, {todayISO()}
         </p>
       </div>
 
@@ -339,8 +345,7 @@ export default function DashboardPage() {
             </div>
           </div>
           <div className="text-sm text-gray-500">
-            Current time:{" "}
-            <span className="font-medium">{fromMinutes(nowMin)}</span>
+            Current time: <span className="font-medium">{fromMinutes(nowMin)}</span>
           </div>
         </div>
 
@@ -517,8 +522,7 @@ export default function DashboardPage() {
         <section className="rounded-2xl border p-4">
           <h2 className="mb-2 text-lg font-semibold">Shutdown report</h2>
           <p className="text-sm text-gray-600">
-            Preferably close within <b>the last 15 minutes</b> of your day
-            window.
+            Preferably close within <b>the last 15 minutes</b> of your day window.
           </p>
 
           <div className="mt-3">
@@ -594,7 +598,7 @@ export default function DashboardPage() {
       {!pack?.openedAt && (
         <section className="rounded-2xl border p-4">
           <h2 className="mb-2 text-lg font-semibold">Get started</h2>
-          <ol className="list-decimal pl-5 text-sm text-gray-700 space-y-1">
+          <ol className="list-decimal space-y-1 pl-5 text-sm text-gray-700">
             <li>
               Set your goals in <a className="underline" href="/goals">Goals</a>.
             </li>

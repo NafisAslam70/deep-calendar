@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 
 /* Types */
@@ -9,14 +9,23 @@ type Goal = { id: number; label: string; color: string; deadlineISO?: string | n
 
 /* Utils */
 const COLORS = ["bg-blue-500", "bg-emerald-500", "bg-amber-500", "bg-fuchsia-500"] as const;
-async function apiJson(input: RequestInfo, init?: RequestInit) {
+type Color = typeof COLORS[number];
+function isColor(x: string): x is Color {
+  return (COLORS as readonly string[]).includes(x);
+}
+
+type ApiResp<T> = { ok: boolean; status: number; json: T };
+async function apiJson<T>(input: RequestInfo, init?: RequestInit): Promise<ApiResp<T>> {
   const r = await fetch(input, init);
-  const j = r.headers.get("content-type")?.includes("application/json") ? await r.json().catch(() => ({})) : {};
+  const isJson = r.headers.get("content-type")?.includes("application/json");
+  const j = (isJson ? await r.json().catch(() => ({})) : {}) as T;
   return { ok: r.ok, status: r.status, json: j };
 }
 
 /* Confirm dialog */
-function ConfirmDialog({ open, title, body, confirmText = "Confirm", destructive = false, onCancel, onConfirm }:{
+function ConfirmDialog({
+  open, title, body, confirmText = "Confirm", destructive = false, onCancel, onConfirm,
+}:{
   open: boolean; title: string; body?: React.ReactNode; confirmText?: string; destructive?: boolean; onCancel: () => void; onConfirm: () => void | Promise<void>;
 }) {
   if (!open) return null;
@@ -43,45 +52,63 @@ export default function GoalsPage() {
   const triedRef = useRef(false);
 
   const [goals, setGoals] = useState<Goal[]>([]);
-  const [gLabel, setGLabel] = useState(""); const [gColor, setGColor] = useState(COLORS[0]); const [gDeadline, setGDeadline] = useState("");
+  const [gLabel, setGLabel] = useState("");
+  const [gColor, setGColor] = useState<Color>(COLORS[0]);
+  const [gDeadline, setGDeadline] = useState("");
 
   const [editingGoalId, setEditingGoalId] = useState<number | null>(null);
-  const [editLabel, setEditLabel] = useState(""); const [editColor, setEditColor] = useState(COLORS[0]); const [editDeadline, setEditDeadline] = useState("");
+  const [editLabel, setEditLabel] = useState("");
+  const [editColor, setEditColor] = useState<Color>(COLORS[0]);
+  const [editDeadline, setEditDeadline] = useState("");
 
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [confirmTitle, setConfirmTitle] = useState(""); const [confirmBody, setConfirmBody] = useState<React.ReactNode>(null);
-  const [confirmText, setConfirmText] = useState("Confirm"); const [confirmDestructive, setConfirmDestructive] = useState(false);
+  const [confirmTitle, setConfirmTitle] = useState("");
+  const [confirmBody, setConfirmBody] = useState<React.ReactNode>(null);
+  const [confirmText, setConfirmText] = useState("Confirm");
+  const [confirmDestructive, setConfirmDestructive] = useState(false);
   const confirmActionRef = useRef<null | (() => void | Promise<void>)>(null);
   function askConfirm(opts: { title: string; body?: React.ReactNode; confirmText?: string; destructive?: boolean; onConfirm: () => void | Promise<void>; }) {
     setConfirmTitle(opts.title); setConfirmBody(opts.body ?? null); setConfirmText(opts.confirmText ?? "Confirm");
     setConfirmDestructive(!!opts.destructive); confirmActionRef.current = opts.onConfirm; setConfirmOpen(true);
   }
 
-  async function loadMe() {
+  const loadMe = useCallback(async () => {
     if (triedRef.current) return; triedRef.current = true;
-    const { ok, status } = await apiJson("/api/auth/me");
+    const { ok, status } = await apiJson<Record<string, unknown>>("/api/auth/me");
     if (ok) setAuthState("authed"); else if (status === 401) setAuthState("anon");
-  }
-  async function loadGoals() {
-    const { ok, status, json } = await apiJson("/api/deepcal/goals");
+  }, []);
+
+  const loadGoals = useCallback(async () => {
+    const { ok, status, json } = await apiJson<{ goals: Goal[] }>("/api/deepcal/goals");
     if (ok) { setGoals(json.goals ?? []); if (authState !== "authed") setAuthState("authed"); }
     else if (status === 401) setAuthState("anon");
-  }
+  }, [authState]);
 
   useEffect(() => { if (authState === "anon") router.replace(`/auth/signin?next=${encodeURIComponent("/goals")}`); }, [authState, router]);
-  useEffect(() => { loadMe(); loadGoals(); }, []);
+  useEffect(() => { void loadMe(); void loadGoals(); }, [loadMe, loadGoals]);
 
   async function createGoal() {
     if (!gLabel.trim()) return;
-    if (goals.length >= 3) { askConfirm({ title: "Goal limit", body: "Max 3 goals allowed.", onConfirm: () => setConfirmOpen(false) }); return; }
+    if (goals.length >= 3) {
+      askConfirm({ title: "Goal limit", body: "Max 3 goals allowed.", onConfirm: () => setConfirmOpen(false) });
+      return;
+    }
     const { ok } = await apiJson("/api/deepcal/goals", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ label: gLabel.trim(), color: gColor, deadlineISO: gDeadline || undefined }),
     });
     if (ok) { setGLabel(""); setGDeadline(""); await loadGoals(); }
   }
-  function beginEdit(g: Goal) { setEditingGoalId(g.id); setEditLabel(g.label); setEditColor((COLORS as readonly string[]).includes(g.color) ? (g.color as any) : COLORS[0]); setEditDeadline(g.deadlineISO || ""); }
+
+  function beginEdit(g: Goal) {
+    setEditingGoalId(g.id);
+    setEditLabel(g.label);
+    setEditColor(isColor(g.color) ? g.color : COLORS[0]);
+    setEditDeadline(g.deadlineISO || "");
+  }
+
   function cancelEdit() { setEditingGoalId(null); }
+
   function saveEditModal() {
     askConfirm({
       title: "Save goal changes?",
@@ -97,6 +124,7 @@ export default function GoalsPage() {
       },
     });
   }
+
   function deleteGoalModal(id: number, label: string) {
     askConfirm({
       title: "Delete goal?",

@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { goals, routines, routineWindows, days, blocks } from "@/lib/schema";
@@ -8,6 +6,7 @@ import { verifyToken } from "@/lib/jwt";
 
 type Depth = 1 | 2 | 3;
 type Ctx = { params: Promise<{ slug?: string[] }> };
+type RoutineInsert = typeof routines.$inferInsert;
 
 async function getUid(req: NextRequest) {
   const auth = req.headers.get("authorization") || "";
@@ -49,6 +48,40 @@ function instantiateFromRoutine(
     }));
 }
 
+/** shared conflict checker */
+async function getRoutineConflictsForUser(
+  uid: number,
+  payloadItems: Array<{ days: number[]; sprints: Array<{ startMin: number; endMin: number }> }>
+) {
+  if (!payloadItems.length) return [] as Array<{ weekday: number; startMin: number; endMin: number }>;
+
+  const daySet = new Set<number>();
+  for (const it of payloadItems) for (const d of it.days || []) if (d >= 0 && d <= 6) daySet.add(d);
+  const daysList = [...daySet];
+  if (!daysList.length) return [];
+
+  const existing = await db
+    .select()
+    .from(routines)
+    .where(and(eq(routines.userId, uid), inArray(routines.weekday, daysList)));
+
+  const conflicts: Array<{ weekday: number; startMin: number; endMin: number }> = [];
+  for (const it of payloadItems) {
+    for (const wd of it.days) {
+      const ex = existing.filter((r) => r.weekday === wd);
+      for (const sp of it.sprints) {
+        for (const r of ex) {
+          if (overlap(sp.startMin, sp.endMin, r.startMin, r.endMin)) {
+            conflicts.push({ weekday: wd, startMin: r.startMin, endMin: r.endMin });
+          }
+        }
+      }
+    }
+  }
+  const key = (c: { weekday: number; startMin: number; endMin: number }) => `${c.weekday}-${c.startMin}-${c.endMin}`;
+  return Array.from(new Map(conflicts.map((c) => [key(c), c])).values());
+}
+
 // ---------------- GET ----------------
 export async function GET(req: NextRequest, ctx: Ctx) {
   const uid = await getUid(req);
@@ -59,10 +92,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   const url = new URL(req.url);
 
   if (slug[0] === "goals") {
-    const gs = await db
-      .select()
-      .from(goals)
-      .where(and(eq(goals.userId, uid), eq(goals.isArchived, false)));
+    const gs = await db.select().from(goals).where(and(eq(goals.userId, uid), eq(goals.isArchived, false)));
     return NextResponse.json({ goals: gs });
   }
 
@@ -74,17 +104,11 @@ export async function GET(req: NextRequest, ctx: Ctx) {
 
   if (slug[0] === "routine") {
     const weekdayParam = url.searchParams.get("weekday");
-    if (weekdayParam == null) {
-      return NextResponse.json({ error: "weekday 0..6 required" }, { status: 400 });
-    }
+    if (weekdayParam == null) return NextResponse.json({ error: "weekday 0..6 required" }, { status: 400 });
     const weekday = Number(weekdayParam);
-    if (!(weekday >= 0 && weekday <= 6))
-      return NextResponse.json({ error: "weekday 0..6 required" }, { status: 400 });
+    if (!(weekday >= 0 && weekday <= 6)) return NextResponse.json({ error: "weekday 0..6 required" }, { status: 400 });
 
-    const items = await db
-      .select()
-      .from(routines)
-      .where(and(eq(routines.userId, uid), eq(routines.weekday, weekday)));
+    const items = await db.select().from(routines).where(and(eq(routines.userId, uid), eq(routines.weekday, weekday)));
     const [win] = await db
       .select()
       .from(routineWindows)
@@ -100,20 +124,11 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     const autocreate = url.searchParams.get("autocreate") === "true";
     if (!dateISO) return NextResponse.json({ error: "date required" }, { status: 400 });
 
-    let [dayRow] = await db
-      .select()
-      .from(days)
-      .where(and(eq(days.userId, uid), eq(days.dateISO, dateISO)));
+    let [dayRow] = await db.select().from(days).where(and(eq(days.userId, uid), eq(days.dateISO, dateISO)));
     if (!dayRow && autocreate) {
       const weekday = new Date(`${dateISO}T00:00:00`).getDay();
-      const routine = await db
-        .select()
-        .from(routines)
-        .where(and(eq(routines.userId, uid), eq(routines.weekday, weekday)));
-      const [created] = await db
-        .insert(days)
-        .values({ userId: uid, dateISO, openedAt: new Date() })
-        .returning();
+      const routine = await db.select().from(routines).where(and(eq(routines.userId, uid), eq(routines.weekday, weekday)));
+      const [created] = await db.insert(days).values({ userId: uid, dateISO, openedAt: new Date() }).returning();
       dayRow = created;
       if (routine.length) {
         const blocksData = instantiateFromRoutine(
@@ -173,21 +188,14 @@ export async function POST(req: NextRequest, ctx: Ctx) {
 
   if (slug[0] === "goals") {
     const { label, color, deadlineISO } = body || {};
-    if (!label || !color)
-      return NextResponse.json({ error: "label,color required" }, { status: 400 });
+    if (!label || !color) return NextResponse.json({ error: "label,color required" }, { status: 400 });
     const [g] = await db
       .insert(goals)
-      .values({
-        userId: uid,
-        label,
-        color,
-        deadlineISO: deadlineISO ?? null,
-      })
+      .values({ userId: uid, label, color, deadlineISO: deadlineISO ?? null })
       .returning();
     return NextResponse.json({ goal: g });
   }
 
-  // routine helpers
   if (slug[0] === "routine" && slug[1] === "finalize") {
     const finalized = !!body?.finalized;
     const res = NextResponse.json({ ok: true, finalized });
@@ -203,108 +211,59 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   if (slug[0] === "routine" && slug[1] === "window") {
     const openMin = Number(body?.openMin);
     const closeMin = Number(body?.closeMin);
-    const daysArr: number[] = Array.isArray(body?.days)
-      ? body.days.map(Number)
-      : [];
-    if (
-      !Number.isInteger(openMin) ||
-      !Number.isInteger(closeMin) ||
-      closeMin <= openMin
-    ) {
-      return NextResponse.json(
-        { error: "invalid openMin/closeMin" },
-        { status: 400 }
-      );
+    const daysArr: number[] = Array.isArray(body?.days) ? body.days.map(Number) : [];
+    if (!Number.isInteger(openMin) || !Number.isInteger(closeMin) || closeMin <= openMin) {
+      return NextResponse.json({ error: "invalid openMin/closeMin" }, { status: 400 });
     }
     if (daysArr.length === 0 || daysArr.some((wd) => !(wd >= 0 && wd <= 6))) {
       return NextResponse.json({ error: "invalid days[]" }, { status: 400 });
     }
-    // upsert windows per selected day
     for (const wd of daysArr) {
-      await db
-        .delete(routineWindows)
-        .where(and(eq(routineWindows.userId, uid), eq(routineWindows.weekday, wd)));
+      await db.delete(routineWindows).where(and(eq(routineWindows.userId, uid), eq(routineWindows.weekday, wd)));
       await db.insert(routineWindows).values({ userId: uid, weekday: wd, openMin, closeMin });
     }
     return NextResponse.json({ ok: true, days: daysArr });
   }
 
   if (slug[0] === "routine" && slug[1] === "conflicts") {
-    // body: { items: [{ days: number[], sprints: [{startMin,endMin}] }] }
-    const items: Array<{
-      days: number[];
-      sprints: Array<{ startMin: number; endMin: number }>;
-    }> = Array.isArray(body?.items) ? body.items : [];
-    if (items.length === 0) return NextResponse.json({ conflicts: [] });
-
-    const daySet = new Set<number>();
-    for (const it of items)
-      for (const d of it.days || []) if (d >= 0 && d <= 6) daySet.add(d);
-    const daysList = [...daySet];
-    if (daysList.length === 0) return NextResponse.json({ conflicts: [] });
-
-    const existing = await db
-      .select()
-      .from(routines)
-      .where(and(eq(routines.userId, uid), inArray(routines.weekday, daysList)));
-
-    const conflicts: Array<{ weekday: number; startMin: number; endMin: number }> =
-      [];
-    for (const it of items) {
-      for (const wd of it.days) {
-        const ex = existing.filter((r) => r.weekday === wd);
-        for (const sp of it.sprints) {
-          for (const r of ex) {
-            if (overlap(sp.startMin, sp.endMin, r.startMin, r.endMin)) {
-              conflicts.push({ weekday: wd, startMin: r.startMin, endMin: r.endMin });
-            }
-          }
-        }
-      }
-    }
-    // dedupe
-    const key = (c: { weekday: number; startMin: number; endMin: number }) =>
-      `${c.weekday}-${c.startMin}-${c.endMin}`;
-    const dedup = Array.from(new Map(conflicts.map((c) => [key(c), c])).values());
-    return NextResponse.json({ conflicts: dedup });
+    const items: Array<{ days: number[]; sprints: Array<{ startMin: number; endMin: number }> }> = Array.isArray(
+      body?.items
+    )
+      ? body.items
+      : [];
+    const conflicts = await getRoutineConflictsForUser(uid, items);
+    return NextResponse.json({ conflicts });
   }
 
   if (slug[0] === "routine" && slug[1] === "push") {
     const overwrite = url.searchParams.get("overwrite") === "1";
     type PushItem = {
       label?: string;
-      depthLevel: number;
+      depthLevel: Depth | number;
+      goalId: number; // REQUIRED to satisfy schema
       days: number[];
       sprints: Array<{ startMin: number; endMin: number }>;
     };
     const items: PushItem[] = Array.isArray(body?.items) ? body.items : [];
     if (items.length === 0) return NextResponse.json({ ok: true, inserted: 0 });
 
-    // Conflict check if not overwriting
+    // validate goalIds exist on all items
+    if (items.some((it) => typeof it.goalId !== "number")) {
+      return NextResponse.json({ error: "goalId required for all items" }, { status: 400 });
+    }
+
     if (!overwrite) {
-      const chk = await POST(
-        new NextRequest(new URL(req.url).toString(), {
-          method: "POST",
-          body: JSON.stringify({
-            items: items.map((it) => ({ days: it.days, sprints: it.sprints })),
-          }),
-          headers: { "content-type": "application/json" },
-        } as unknown as Request),
-        { params: Promise.resolve({ slug: ["routine", "conflicts"] }) } as Ctx
+      const conflicts = await getRoutineConflictsForUser(
+        uid,
+        items.map((it) => ({ days: it.days, sprints: it.sprints }))
       );
-      const cj = await chk.json();
-      if ((cj?.conflicts?.length ?? 0) > 0)
-        return NextResponse.json(
-          { error: "conflicts", conflicts: cj.conflicts },
-          { status: 409 }
-        );
+      if (conflicts.length) return NextResponse.json({ error: "conflicts", conflicts }, { status: 409 });
     }
 
     // Overwrite: delete overlaps first
     if (overwrite) {
       const daySet = new Set<number>();
-      for (const it of items)
-        for (const d of it.days || []) if (d >= 0 && d <= 6) daySet.add(d);
+      for (const it of items) for (const d of it.days || []) if (d >= 0 && d <= 6) daySet.add(d);
       const daysList = [...daySet];
       if (daysList.length) {
         const existing = await db
@@ -316,43 +275,37 @@ export async function POST(req: NextRequest, ctx: Ctx) {
           for (const wd of it.days) {
             const ex = existing.filter((r) => r.weekday === wd);
             for (const sp of it.sprints) {
-              for (const r of ex) {
-                if (overlap(sp.startMin, sp.endMin, r.startMin, r.endMin))
-                  toDeleteIds.push(r.id);
-              }
+              for (const r of ex) if (overlap(sp.startMin, sp.endMin, r.startMin, r.endMin)) toDeleteIds.push(r.id);
             }
           }
         }
         const uniqueIds = Array.from(new Set(toDeleteIds));
-        if (uniqueIds.length) {
-          await db.delete(routines).where(inArray(routines.id, uniqueIds));
-        }
+        if (uniqueIds.length) await db.delete(routines).where(inArray(routines.id, uniqueIds));
       }
     }
 
     // Insert
     let count = 0;
     for (const it of items) {
-      const label =
-        typeof it.label === "string" && it.label.trim() ? it.label.trim() : null;
-      const depth: Depth =
-        it.depthLevel === 1 || it.depthLevel === 2 || it.depthLevel === 3
-          ? (it.depthLevel as Depth)
-          : 3;
+      const label = typeof it.label === "string" && it.label.trim() ? it.label.trim() : null;
+      const depth = (Number(it.depthLevel) as Depth) || 3;
+
       for (const wd of it.days) {
         if (!(wd >= 0 && wd <= 6)) continue;
-        const values = it.sprints.map((s, i) => ({
+
+        const values: RoutineInsert[] = it.sprints.map((s, i) => ({
           userId: uid,
           weekday: wd,
           startMin: s.startMin,
           endMin: s.endMin,
           depthLevel: depth,
-          goalId: null,
-          label,
+          goalId: it.goalId, // REQUIRED
+          ...(label ? { label } : {}),
           orderIndex: i,
         }));
+
         if (values.length) {
-          await db.insert(routines).values(values as any);
+          await db.insert(routines).values(values);
           count += values.length;
         }
       }
@@ -368,22 +321,12 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     if (Array.isArray(applyTo) && applyTo.length > 0) {
       const wds = applyTo.map(Number);
       if (wds.some((wd: number) => !(wd >= 0 && wd <= 6))) {
-        return NextResponse.json(
-          { error: "invalid weekday in applyTo" },
-          { status: 400 }
-        );
+        return NextResponse.json({ error: "invalid weekday in applyTo" }, { status: 400 });
       }
 
       for (const wd of wds) {
-        // window upsert
-        if (
-          window &&
-          Number.isInteger(window.openMin) &&
-          Number.isInteger(window.closeMin)
-        ) {
-          await db
-            .delete(routineWindows)
-            .where(and(eq(routineWindows.userId, uid), eq(routineWindows.weekday, wd)));
+        if (window && Number.isInteger(window.openMin) && Number.isInteger(window.closeMin)) {
+          await db.delete(routineWindows).where(and(eq(routineWindows.userId, uid), eq(routineWindows.weekday, wd)));
           await db.insert(routineWindows).values({
             userId: uid,
             weekday: wd,
@@ -392,35 +335,34 @@ export async function POST(req: NextRequest, ctx: Ctx) {
           });
         }
 
-        // replace items
-        await db
-          .delete(routines)
-          .where(and(eq(routines.userId, uid), eq(routines.weekday, wd)));
+        await db.delete(routines).where(and(eq(routines.userId, uid), eq(routines.weekday, wd)));
         if (Array.isArray(items) && items.length) {
           type RoutineItemInput = {
             startMin: number;
             endMin: number;
             depthLevel: number;
-            goalId?: number | null;
+            goalId: number | null | undefined; // allow incoming null/undefined but require number before insert
             label?: string | null;
             orderIndex?: number;
           };
           const arr = items as RoutineItemInput[];
-          await db.insert(routines).values(
-            arr.map((x, i) => ({
-              userId: uid,
-              weekday: wd,
-              startMin: Number(x.startMin),
-              endMin: Number(x.endMin),
-              depthLevel: Number(x.depthLevel),
-              goalId: (x.goalId ?? null),
-              label:
-                typeof x.label === "string" && x.label.trim() ? x.label.trim() : null,
-              orderIndex: Number.isFinite(x.orderIndex as number)
-                ? (x.orderIndex as number)
-                : i,
-            }))
-          );
+
+          // ensure all items have goalId
+          if (arr.some((x) => typeof x.goalId !== "number")) {
+            return NextResponse.json({ error: "goalId required for each routine item" }, { status: 400 });
+          }
+
+          const values: RoutineInsert[] = arr.map((x, i) => ({
+            userId: uid,
+            weekday: wd,
+            startMin: Number(x.startMin),
+            endMin: Number(x.endMin),
+            depthLevel: Number(x.depthLevel) as Depth,
+            goalId: x.goalId as number, // REQUIRED
+            ...(typeof x.label === "string" && x.label.trim() ? { label: x.label.trim() } : {}),
+            orderIndex: Number.isFinite(x.orderIndex as number) ? (x.orderIndex as number) : i,
+          }));
+          await db.insert(routines).values(values);
         }
       }
       return NextResponse.json({ ok: true, applied: wds });
@@ -429,20 +371,11 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     // Single weekday mode
     const wd = Number(weekday);
     if (!(wd >= 0 && wd <= 6)) {
-      return NextResponse.json(
-        { error: "weekday 0..6 required (or provide applyTo[])" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "weekday 0..6 required (or provide applyTo[])" }, { status: 400 });
     }
 
-    if (
-      window &&
-      Number.isInteger(window.openMin) &&
-      Number.isInteger(window.closeMin)
-    ) {
-      await db
-        .delete(routineWindows)
-        .where(and(eq(routineWindows.userId, uid), eq(routineWindows.weekday, wd)));
+    if (window && Number.isInteger(window.openMin) && Number.isInteger(window.closeMin)) {
+      await db.delete(routineWindows).where(and(eq(routineWindows.userId, uid), eq(routineWindows.weekday, wd)));
       await db.insert(routineWindows).values({
         userId: uid,
         weekday: wd,
@@ -451,42 +384,40 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       });
     }
 
-    await db
-      .delete(routines)
-      .where(and(eq(routines.userId, uid), eq(routines.weekday, wd)));
+    await db.delete(routines).where(and(eq(routines.userId, uid), eq(routines.weekday, wd)));
     if (Array.isArray(items) && items.length) {
       type RoutineItemInput = {
         startMin: number;
         endMin: number;
         depthLevel: number;
-        goalId?: number | null;
+        goalId: number | null | undefined;
         label?: string | null;
         orderIndex?: number;
       };
       const arr = items as RoutineItemInput[];
-      await db.insert(routines).values(
-        arr.map((x, i) => ({
-          userId: uid,
-          weekday: wd,
-          startMin: Number(x.startMin),
-          endMin: Number(x.endMin),
-          depthLevel: Number(x.depthLevel),
-          goalId: (x.goalId ?? null),
-          label:
-            typeof x.label === "string" && x.label.trim() ? x.label.trim() : null,
-          orderIndex: Number.isFinite(x.orderIndex as number)
-            ? (x.orderIndex as number)
-            : i,
-        }))
-      );
+
+      if (arr.some((x) => typeof x.goalId !== "number")) {
+        return NextResponse.json({ error: "goalId required for each routine item" }, { status: 400 });
+      }
+
+      const values: RoutineInsert[] = arr.map((x, i) => ({
+        userId: uid,
+        weekday: wd,
+        startMin: Number(x.startMin),
+        endMin: Number(x.endMin),
+        depthLevel: Number(x.depthLevel) as Depth,
+        goalId: x.goalId as number, // REQUIRED
+        ...(typeof x.label === "string" && x.label.trim() ? { label: x.label.trim() } : {}),
+        orderIndex: Number.isFinite(x.orderIndex as number) ? (x.orderIndex as number) : i,
+      }));
+      await db.insert(routines).values(values);
     }
     return NextResponse.json({ ok: true });
   }
 
   if (slug[0] === "day" && slug[1] === "shutdown") {
     const { dateISO, journal } = body || {};
-    if (!dateISO)
-      return NextResponse.json({ error: "dateISO required" }, { status: 400 });
+    if (!dateISO) return NextResponse.json({ error: "dateISO required" }, { status: 400 });
     await db
       .update(days)
       .set({ shutdownAt: new Date(), journal: journal ?? null })
@@ -498,7 +429,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
 }
 
 // ---------------- PATCH ----------------
-export async function PATCH(req: NextRequest, _ctx: Ctx) {
+export async function PATCH(req: NextRequest) {
   const uid = await getUid(req);
   if (!uid) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
@@ -507,8 +438,7 @@ export async function PATCH(req: NextRequest, _ctx: Ctx) {
 
   if (url.pathname.includes("/blocks")) {
     const id = Number(url.searchParams.get("id"));
-    if (!Number.isInteger(id))
-      return NextResponse.json({ error: "invalid id" }, { status: 400 });
+    if (!Number.isInteger(id)) return NextResponse.json({ error: "invalid id" }, { status: 400 });
 
     await db
       .update(blocks)
@@ -545,26 +475,18 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
 
   if (slug[0] === "goals") {
     const id = Number(url.searchParams.get("id"));
-    if (!Number.isInteger(id))
-      return NextResponse.json({ error: "invalid id" }, { status: 400 });
-    await db
-      .update(goals)
-      .set({ isArchived: true })
-      .where(and(eq(goals.userId, uid), eq(goals.id, id)));
+    if (!Number.isInteger(id)) return NextResponse.json({ error: "invalid id" }, { status: 400 });
+    await db.update(goals).set({ isArchived: true }).where(and(eq(goals.userId, uid), eq(goals.id, id)));
     return NextResponse.json({ ok: true });
   }
 
   if (slug[0] === "routine") {
     const weekdayParam = url.searchParams.get("weekday");
-    if (weekdayParam == null)
-      return NextResponse.json({ error: "weekday required" }, { status: 400 });
+    if (weekdayParam == null) return NextResponse.json({ error: "weekday required" }, { status: 400 });
     const wd = Number(weekdayParam);
-    if (!(wd >= 0 && wd <= 6))
-      return NextResponse.json({ error: "weekday 0..6" }, { status: 400 });
+    if (!(wd >= 0 && wd <= 6)) return NextResponse.json({ error: "weekday 0..6" }, { status: 400 });
 
-    await db
-      .delete(routines)
-      .where(and(eq(routines.userId, uid), eq(routines.weekday, wd)));
+    await db.delete(routines).where(and(eq(routines.userId, uid), eq(routines.weekday, wd)));
     await db
       .delete(routineWindows)
       .where(and(eq(routineWindows.userId, uid), eq(routineWindows.weekday, wd)));

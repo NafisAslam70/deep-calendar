@@ -5,12 +5,7 @@ import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 /* Types */
 type AuthState = "loading" | "authed" | "anon";
 type Depth = 1 | 2 | 3;
-type Goal = {
-  id: number;
-  label: string;
-  color: string;
-  deadlineISO?: string | null;
-};
+type Goal = { id: number; label: string; color: string; deadlineISO?: string | null };
 type RoutineWindow = { openMin: number; closeMin: number } | null;
 type DraftSprint = { s: number; e: number };
 type DraftBreak = { s: number; e: number };
@@ -41,17 +36,16 @@ const toMinutes = (t: string) => {
   return h * 60 + m;
 };
 const pad = (n: number) => String(n).padStart(2, "0");
-const fromMinutes = (m: number) =>
-  `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
+const fromMinutes = (m: number) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
 const overlaps = (aS: number, aE: number, bS: number, bE: number) =>
   Math.max(aS, bS) < Math.min(aE, bE);
 
-async function apiJson(input: RequestInfo, init?: RequestInit) {
+type ApiResp<T> = { ok: boolean; status: number; json: T };
+async function apiJson<T>(input: RequestInfo, init?: RequestInit): Promise<ApiResp<T>> {
   const r = await fetch(input, init);
-  const j = r.headers.get("content-type")?.includes("application/json")
-    ? await r.json().catch(() => ({}))
-    : {};
-  return { ok: r.ok, status: r.status, json: j as any };
+  const isJson = r.headers.get("content-type")?.includes("application/json");
+  const j = (isJson ? await r.json().catch(() => ({})) : {}) as T;
+  return { ok: r.ok, status: r.status, json: j };
 }
 
 /* Confirm dialog */
@@ -104,7 +98,7 @@ export default function RoutinePage() {
   useEffect(() => {
     (async () => {
       // ping any authed endpoint
-      const res = await apiJson("/api/deepcal/goals");
+      const res = await apiJson<Record<string, unknown>>("/api/deepcal/goals");
       if (res.ok) setAuthState("authed");
       else if (res.status === 401) setAuthState("anon");
       else setAuthState("loading");
@@ -123,33 +117,26 @@ export default function RoutinePage() {
 
   /* ---------------- server data ---------------- */
   const [goals, setGoals] = useState<Goal[]>([]);
-  const [windowsByDay, setWindowsByDay] = useState<Record<number, RoutineWindow>>(
-    {}
-  );
-  const [existingByDay, setExistingByDay] = useState<Record<number, RoutineItem[]>>(
-    {}
-  );
+  const [windowsByDay, setWindowsByDay] = useState<Record<number, RoutineWindow>>({});
+  const [existingByDay, setExistingByDay] = useState<Record<number, RoutineItem[]>>({});
 
-  async function loadGoals() {
-    const { ok, json } = await apiJson("/api/deepcal/goals");
+  const loadGoals = useCallback(async () => {
+    const { ok, json } = await apiJson<{ goals: Goal[] }>("/api/deepcal/goals");
     if (ok) setGoals(json.goals ?? []);
-  }
+  }, []);
 
   const loadAllRoutine = useCallback(async () => {
     const results = await Promise.all(
       [0, 1, 2, 3, 4, 5, 6].map((d) =>
-        apiJson(`/api/deepcal/routine?weekday=${d}`)
+        apiJson<{ window: RoutineWindow; items: RoutineItem[] }>(`/api/deepcal/routine?weekday=${d}`)
       )
     );
-    const wmap: typeof windowsByDay = {};
-    const emap: typeof existingByDay = {};
+    const wmap: Record<number, RoutineWindow> = {};
+    const emap: Record<number, RoutineItem[]> = {};
     results.forEach((res, idx) => {
       if (res.ok) {
-        wmap[idx] = (res.json.window ?? null) as RoutineWindow;
-        const items = ((res.json.items ?? []) as RoutineItem[])
-          .slice()
-          .sort((a, b) => a.startMin - b.startMin);
-        emap[idx] = items;
+        wmap[idx] = res.json.window ?? null;
+        emap[idx] = (res.json.items ?? []).slice().sort((a, b) => a.startMin - b.startMin);
       }
     });
     setWindowsByDay(wmap);
@@ -158,12 +145,12 @@ export default function RoutinePage() {
 
   useEffect(() => {
     if (authState === "authed") {
-      loadGoals();
-      loadAllRoutine();
+      void loadGoals();
+      void loadAllRoutine();
     }
-  }, [authState, loadAllRoutine]);
+  }, [authState, loadGoals, loadAllRoutine]);
 
-  /* ---------------- finalize flag ---------------- */
+  /* ---------------- finalize flag (preserve original feature) ---------------- */
   const FINALIZE_KEY = "deepcal_routine_finalized";
   const [finalizedFlag, setFinalizedFlagState] = useState<boolean>(false);
   useEffect(() => {
@@ -175,11 +162,10 @@ export default function RoutinePage() {
     setFinalizedFlagState(v);
   }
 
+  // compute server-side presence
   const serverHasRoutine = useMemo(() => {
     const anyWindow = Object.values(windowsByDay).some((w) => !!w);
-    const anyItems = Object.values(existingByDay).some(
-      (arr) => (arr?.length ?? 0) > 0
-    );
+    const anyItems = Object.values(existingByDay).some((arr) => (arr?.length ?? 0) > 0);
     return anyWindow || anyItems;
   }, [windowsByDay, existingByDay]);
 
@@ -189,55 +175,42 @@ export default function RoutinePage() {
   const [windowOpen, setWindowOpen] = useState("09:00");
   const [windowClose, setWindowClose] = useState("18:00");
   const [windowDays, setWindowDays] = useState<Record<number, boolean>>({
-    0: true,
-    1: true,
-    2: true,
-    3: true,
-    4: true,
-    5: true,
-    6: true,
+    0: true, 1: true, 2: true, 3: true, 4: true, 5: true, 6: true,
   });
 
   function setDaysPreset(type: "all" | "weekdays" | "weekends") {
-    const base: Record<number, boolean> = {
-      0: false,
-      1: false,
-      2: false,
-      3: false,
-      4: false,
-      5: false,
-      6: false,
-    };
+    const base: Record<number, boolean> = { 0: false, 1: false, 2: false, 3: false, 4: false, 5: false, 6: false };
     if (type === "all") Object.keys(base).forEach((k) => (base[Number(k)] = true));
     if (type === "weekdays") [1, 2, 3, 4, 5].forEach((d) => (base[d] = true));
     if (type === "weekends") [0, 6].forEach((d) => (base[d] = true));
     setWindowDays(base);
   }
 
+  function askConfirm(opts: {
+    title: string; body?: React.ReactNode; confirmText?: string; destructive?: boolean; onConfirm: () => void | Promise<void>;
+  }) {
+    setConfirmTitle(opts.title);
+    setConfirmBody(opts.body ?? null);
+    setConfirmText(opts.confirmText ?? "Confirm");
+    setConfirmDestructive(!!opts.destructive);
+    confirmActionRef.current = opts.onConfirm;
+    setConfirmOpen(true);
+  }
+
   async function applyWindowToSelected() {
-    const days = Object.entries(windowDays)
-      .filter(([, on]) => on)
-      .map(([d]) => Number(d));
-    const openMin = toMinutes(windowOpen),
-      closeMin = toMinutes(windowClose);
+    const days = Object.entries(windowDays).filter(([, on]) => on).map(([d]) => Number(d));
+    const openMin = toMinutes(windowOpen), closeMin = toMinutes(windowClose);
     if (!(days.length && openMin < closeMin)) return;
 
-    // confirmation modal
     askConfirm({
       title: "Apply day window?",
-      body: `Set ${fromMinutes(openMin)}–${fromMinutes(
-        closeMin
-      )} on ${days.map((d) => WEEKDAYS[d]).join(", ")} (overwrites).`,
+      body: `Set ${fromMinutes(openMin)}–${fromMinutes(closeMin)} on ${days.map((d) => WEEKDAYS[d]).join(", ")} (overwrites).`,
       confirmText: "Apply",
       onConfirm: async () => {
         await apiJson("/api/deepcal/routine", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            applyTo: days,
-            items: [],
-            window: { openMin, closeMin },
-          }),
+          body: JSON.stringify({ applyTo: days, items: [], window: { openMin, closeMin } }),
         });
         await loadAllRoutine();
         setConfirmOpen(false);
@@ -255,30 +228,18 @@ export default function RoutinePage() {
     return Object.entries(groups).map(([key, days]) => ({
       key,
       days,
-      window:
-        key === "none"
-          ? null
-          : {
-              openMin: Number(key.split("-")[0]),
-              closeMin: Number(key.split("-")[1]),
-            },
+      window: key === "none" ? null : { openMin: Number(key.split("-")[0]), closeMin: Number(key.split("-")[1]) },
     }));
   }, [windowsByDay]);
 
-  /* ---------------- composer ---------------- */
+  /* ---------------- composer: block + breaks → sprints ---------------- */
   const [bLabel, setBLabel] = useState("");
   const [bStart, setBStart] = useState("09:00");
   const [bEnd, setBEnd] = useState("13:00");
   const [bDepth, setBDepth] = useState<Depth>(3);
   const [bGoalId, setBGoalId] = useState<number | "">("");
   const [composerDays, setComposerDays] = useState<Record<number, boolean>>({
-    0: false,
-    1: true,
-    2: true,
-    3: true,
-    4: true,
-    5: true,
-    6: false,
+    0: false, 1: true, 2: true, 3: true, 4: true, 5: true, 6: false,
   });
   const [cbStart, setCbStart] = useState("");
   const [cbEnd, setCbEnd] = useState("");
@@ -288,39 +249,25 @@ export default function RoutinePage() {
 
   function addComposerBreak() {
     if (!cbStart || !cbEnd) return;
-    const s = toMinutes(cbStart),
-      e = toMinutes(cbEnd);
-    const bs = toMinutes(bStart),
-      be = toMinutes(bEnd);
+    const s = toMinutes(cbStart), e = toMinutes(cbEnd);
+    const bs = toMinutes(bStart), be = toMinutes(bEnd);
     if (!(s < e) || s < bs || e > be) {
-      askConfirm({
-        title: "Invalid break",
-        body: "Break must be within the block and start < end.",
-        onConfirm: () => setConfirmOpen(false),
-      });
+      askConfirm({ title: "Invalid break", body: "Break must be within the block and start < end.", onConfirm: () => setConfirmOpen(false) });
       return;
     }
     if (composerBreaks.some((x) => overlaps(s, e, x.s, x.e))) {
-      askConfirm({
-        title: "Overlap",
-        body: "Break overlaps another.",
-        onConfirm: () => setConfirmOpen(false),
-      });
+      askConfirm({ title: "Overlap", body: "Break overlaps another.", onConfirm: () => setConfirmOpen(false) });
       return;
     }
     setComposerBreaks([...composerBreaks, { s, e }].sort((a, b) => a.s - b.s));
-    setCbStart("");
-    setCbEnd("");
+    setCbStart(""); setCbEnd("");
   }
-  function removeComposerBreak(i: number) {
-    setComposerBreaks(composerBreaks.filter((_, idx) => idx !== i));
-  }
+  function removeComposerBreak(i: number) { setComposerBreaks(composerBreaks.filter((_, idx) => idx !== i)); }
 
   function composeSprints(blockS: number, blockE: number, breaks: DraftBreak[]) {
     const merged: DraftBreak[] = [];
     for (const br of [...breaks].sort((a, b) => a.s - b.s)) {
-      if (!merged.length || br.s > merged[merged.length - 1].e)
-        merged.push({ ...br });
+      if (!merged.length || br.s > merged[merged.length - 1].e) merged.push({ ...br });
       else merged[merged.length - 1].e = Math.max(merged[merged.length - 1].e, br.e);
     }
     const sprints: DraftSprint[] = [];
@@ -347,100 +294,49 @@ export default function RoutinePage() {
   const [confirmDestructive, setConfirmDestructive] = useState(false);
   const confirmActionRef = useRef<null | (() => void | Promise<void>)>(null);
 
-  function askConfirm(opts: {
-    title: string;
-    body?: React.ReactNode;
-    confirmText?: string;
-    destructive?: boolean;
-    onConfirm: () => void | Promise<void>;
-  }) {
-    setConfirmTitle(opts.title);
-    setConfirmBody(opts.body ?? null);
-    setConfirmText(opts.confirmText ?? "Confirm");
-    setConfirmDestructive(!!opts.destructive);
-    confirmActionRef.current = opts.onConfirm;
-    setConfirmOpen(true);
-  }
-
   async function addBlockWithBreaks() {
     if (!bGoalId) {
-      askConfirm({
-        title: "Pick a goal",
-        onConfirm: () => setConfirmOpen(false),
-      });
+      askConfirm({ title: "Pick a goal", onConfirm: () => setConfirmOpen(false) });
       return;
     }
-    const bs = toMinutes(bStart),
-      be = toMinutes(bEnd);
+    const bs = toMinutes(bStart), be = toMinutes(bEnd);
     if (!(bs < be)) {
-      askConfirm({
-        title: "Invalid block",
-        body: "Start must be before end.",
-        onConfirm: () => setConfirmOpen(false),
-      });
+      askConfirm({ title: "Invalid block", body: "Start must be before end.", onConfirm: () => setConfirmOpen(false) });
       return;
     }
-    const days = Object.entries(composerDays)
-      .filter(([, on]) => on)
-      .map(([d]) => Number(d));
+    const days = Object.entries(composerDays).filter(([, on]) => on).map(([d]) => Number(d));
     if (days.length === 0) {
-      askConfirm({
-        title: "No days selected",
-        onConfirm: () => setConfirmOpen(false),
-      });
+      askConfirm({ title: "No days selected", onConfirm: () => setConfirmOpen(false) });
       return;
     }
 
     const { sprints, mergedBreaks } = composeSprints(bs, be, composerBreaks);
     if (sprints.length === 0) {
-      askConfirm({
-        title: "Fully broken",
-        body: "Breaks cover the whole block.",
-        onConfirm: () => setConfirmOpen(false),
-      });
+      askConfirm({ title: "Fully broken", body: "Breaks cover the whole block.", onConfirm: () => setConfirmOpen(false) });
       return;
     }
     if (draftedSprintsOverlap(sprints)) {
-      askConfirm({
-        title: "Overlaps draft",
-        onConfirm: () => setConfirmOpen(false),
-      });
+      askConfirm({ title: "Overlaps draft", onConfirm: () => setConfirmOpen(false) });
       return;
     }
 
-    // warnings
     const warnings: React.ReactNode[] = [];
     for (const d of days) {
       const win = windowsByDay[d];
       const items = existingByDay[d] ?? [];
-      const outside = win
-        ? sprints.filter((sp) => sp.s < win.openMin || sp.e > win.closeMin)
-        : [];
+      const outside = win ? sprints.filter((sp) => sp.s < win.openMin || sp.e > win.closeMin) : [];
       const ov: Array<{ s: number; e: number; label?: string | null }> = [];
       for (const sp of sprints)
         for (const it of items)
           if (overlaps(sp.s, sp.e, it.startMin, it.endMin))
-            ov.push({
-              s: Math.max(sp.s, it.startMin),
-              e: Math.min(sp.e, it.endMin),
-              label: it.label ?? null,
-            });
+            ov.push({ s: Math.max(sp.s, it.startMin), e: Math.min(sp.e, it.endMin), label: it.label ?? null });
       if (outside.length || ov.length) {
         warnings.push(
           <div key={d} className="mb-2">
             <div className="font-medium">{WEEKDAYS[d]}</div>
             <ul className="mt-1 list-disc pl-5 text-sm">
-              {outside.map((o, i) => (
-                <li key={`o${i}`}>
-                  {fromMinutes(o.s)}–{fromMinutes(o.e)} outside day window
-                </li>
-              ))}
-              {ov.map((o, i) => (
-                <li key={`v${i}`}>
-                  {fromMinutes(o.s)}–{fromMinutes(o.e)} overlaps existing
-                  {o.label ? ` (${o.label})` : ""}
-                </li>
-              ))}
+              {outside.map((o, i) => (<li key={`o${i}`}>{fromMinutes(o.s)}–{fromMinutes(o.e)} outside day window</li>))}
+              {ov.map((o, i) => (<li key={`v${i}`}>{fromMinutes(o.s)}–{fromMinutes(o.e)} overlaps existing{o.label ? ` (${o.label})` : ""}</li>))}
             </ul>
           </div>
         );
@@ -481,16 +377,7 @@ export default function RoutinePage() {
   }
 
   function itemsByWeekdayFromGroups() {
-    const map = new Map<
-      number,
-      Array<{
-        startMin: number;
-        endMin: number;
-        depthLevel: Depth;
-        goalId: number;
-        label?: string;
-      }>
-    >();
+    const map = new Map<number, Array<{ startMin: number; endMin: number; depthLevel: Depth; goalId: number; label?: string }>>();
     for (const g of groups) {
       const items = g.sprints.map((sp, i) => ({
         startMin: sp.s,
@@ -510,43 +397,23 @@ export default function RoutinePage() {
 
   async function pushDraft() {
     if (groups.length === 0) {
-      askConfirm({
-        title: "Nothing to push",
-        onConfirm: () => setConfirmOpen(false),
-      });
+      askConfirm({ title: "Nothing to push", onConfirm: () => setConfirmOpen(false) });
       return;
     }
     const byDay = itemsByWeekdayFromGroups();
     if (byDay.size === 0) {
-      askConfirm({
-        title: "No days chosen",
-        onConfirm: () => setConfirmOpen(false),
-      });
+      askConfirm({ title: "No days chosen", onConfirm: () => setConfirmOpen(false) });
       return;
     }
 
-    // conflicts preview
-    const conflicts: Array<{
-      weekday: number;
-      overlaps: Array<{ s: number; e: number; existLabel?: string | null; label?: string }>;
-    }> = [];
+    const conflicts: Array<{ weekday: number; overlaps: Array<{ s: number; e: number; existLabel?: string | null; label?: string }> }> = [];
     for (const [wd, items] of byDay.entries()) {
       const ex = existingByDay[wd] ?? [];
-      const list: Array<{
-        s: number;
-        e: number;
-        existLabel?: string | null;
-        label?: string;
-      }> = [];
+      const list: Array<{ s: number; e: number; existLabel?: string | null; label?: string }> = [];
       for (const ni of items)
         for (const ei of ex)
           if (overlaps(ni.startMin, ni.endMin, ei.startMin, ei.endMin))
-            list.push({
-              s: Math.max(ni.startMin, ei.startMin),
-              e: Math.min(ni.endMin, ei.endMin),
-              existLabel: ei.label ?? null,
-              label: ni.label,
-            });
+            list.push({ s: Math.max(ni.startMin, ei.startMin), e: Math.min(ni.endMin, ei.endMin), existLabel: ei.label ?? null, label: ni.label });
       if (list.length) conflicts.push({ weekday: wd, overlaps: list });
     }
 
@@ -555,10 +422,7 @@ export default function RoutinePage() {
         await apiJson("/api/deepcal/routine", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            applyTo: [weekday],
-            items: items.map((x, i) => ({ ...x, orderIndex: i })),
-          }),
+          body: JSON.stringify({ applyTo: [weekday], items: items.map((x, i) => ({ ...x, orderIndex: i })) }),
         });
       }
       await loadAllRoutine();
@@ -578,8 +442,7 @@ export default function RoutinePage() {
                 <ul className="mt-1 list-disc pl-5 text-sm">
                   {c.overlaps.map((o, j) => (
                     <li key={j}>
-                      {fromMinutes(o.s)}–{fromMinutes(o.e)} • new:{" "}
-                      {o.label || "block"}
+                      {fromMinutes(o.s)}–{fromMinutes(o.e)} • new: {o.label || "block"}
                       {o.existLabel ? ` • existing: ${o.existLabel}` : ""}
                     </li>
                   ))}
@@ -659,17 +522,11 @@ export default function RoutinePage() {
             : "Routine not finalized"}
         </span>
         {finalizedFlag ? (
-          <button
-            className="w-full sm:w-auto rounded-lg border px-3 py-1.5 text-sm"
-            onClick={() => setFinalizedFlag(false)}
-          >
+          <button className="w-full sm:w-auto rounded-lg border px-3 py-1.5 text-sm" onClick={() => setFinalizedFlag(false)}>
             Modify routine
           </button>
         ) : (
-          <button
-            className="w-full sm:w-auto rounded-lg bg-black px-3 py-1.5 text-sm text-white"
-            onClick={() => setFinalizedFlag(true)}
-          >
+          <button className="w-full sm:w-auto rounded-lg bg-black px-3 py-1.5 text-sm text-white" onClick={() => setFinalizedFlag(true)}>
             Finalize routine
           </button>
         )}
@@ -681,21 +538,11 @@ export default function RoutinePage() {
         <div className="grid gap-3 sm:grid-cols-5">
           <label className="space-y-1">
             <span className="text-sm text-gray-500">Open</span>
-            <input
-              type="time"
-              className="w-full rounded-lg border px-3 py-2"
-              value={windowOpen}
-              onChange={(e) => setWindowOpen(e.target.value)}
-            />
+            <input type="time" className="w-full rounded-lg border px-3 py-2" value={windowOpen} onChange={(e) => setWindowOpen(e.target.value)} />
           </label>
           <label className="space-y-1">
             <span className="text-sm text-gray-500">Close</span>
-            <input
-              type="time"
-              className="w-full rounded-lg border px-3 py-2"
-              value={windowClose}
-              onChange={(e) => setWindowClose(e.target.value)}
-            />
+            <input type="time" className="w-full rounded-lg border px-3 py-2" value={windowClose} onChange={(e) => setWindowClose(e.target.value)} />
           </label>
           <div className="sm:col-span-3">
             <div className="mb-2 text-sm text-gray-500">Apply to days</div>
@@ -703,51 +550,23 @@ export default function RoutinePage() {
               {WEEKDAYS.map((w, i) => (
                 <button
                   key={w}
-                  onClick={() =>
-                    setWindowDays((s) => ({
-                      ...s,
-                      [i]: !s[i],
-                    }))
-                  }
-                  className={`rounded-lg px-3 py-1.5 text-sm ring-1 ring-gray-200 ${
-                    windowDays[i] ? "bg-black text-white" : "bg-white"
-                  }`}
+                  onClick={() => setWindowDays((s) => ({ ...s, [i]: !s[i] }))}
+                  className={`rounded-lg px-3 py-1.5 text-sm ring-1 ring-gray-200 ${windowDays[i] ? "bg-black text-white" : "bg-white"}`}
                 >
                   {w}
                 </button>
               ))}
-              <button
-                onClick={() => setDaysPreset("weekdays")}
-                className="rounded-lg border px-3 py-1.5 text-sm"
-              >
-                Weekdays
-              </button>
-              <button
-                onClick={() => setDaysPreset("weekends")}
-                className="rounded-lg border px-3 py-1.5 text-sm"
-              >
-                Weekends
-              </button>
-              <button
-                onClick={() => setDaysPreset("all")}
-                className="rounded-lg border px-3 py-1.5 text-sm"
-              >
-                All
-              </button>
+              <button onClick={() => setDaysPreset("weekdays")} className="rounded-lg border px-3 py-1.5 text-sm">Weekdays</button>
+              <button onClick={() => setDaysPreset("weekends")} className="rounded-lg border px-3 py-1.5 text-sm">Weekends</button>
+              <button onClick={() => setDaysPreset("all")} className="rounded-lg border px-3 py-1.5 text-sm">All</button>
             </div>
           </div>
         </div>
         <div className="pt-3 flex flex-col gap-2 sm:flex-row">
-          <button
-            className="w-full sm:w-auto rounded-lg border px-3 py-1.5 text-sm"
-            onClick={applyWindowToSelected}
-          >
+          <button className="w-full sm:w-auto rounded-lg border px-3 py-1.5 text-sm" onClick={applyWindowToSelected}>
             Save window to selected days
           </button>
-          <button
-            className="w-full sm:w-auto rounded-lg border px-3 py-1.5 text-sm"
-            onClick={loadAllRoutine}
-          >
+          <button className="w-full sm:w-auto rounded-lg border px-3 py-1.5 text-sm" onClick={loadAllRoutine}>
             Refresh
           </button>
         </div>
@@ -760,41 +579,19 @@ export default function RoutinePage() {
           ) : (
             <div className="space-y-2">
               {groupedWindows.map((g) => (
-                <div
-                  key={g.key}
-                  className="flex flex-col gap-2 rounded-lg border p-2 text-sm sm:flex-row sm:items-center sm:justify-between"
-                >
+                <div key={g.key} className="flex flex-col gap-2 rounded-lg border p-2 text-sm sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <span className="font-medium">
-                      {g.window
-                        ? `${fromMinutes(g.window.openMin)}–${fromMinutes(
-                            g.window.closeMin
-                          )}`
-                        : "not set"}
+                      {g.window ? `${fromMinutes(g.window.openMin)}–${fromMinutes(g.window.closeMin)}` : "not set"}
                     </span>
-                    <span className="text-gray-600">
-                      {" "}
-                      → {g.days.map((d) => WEEKDAYS[d]).join(", ")}
-                    </span>
+                    <span className="text-gray-600"> → {g.days.map((d) => WEEKDAYS[d]).join(", ")}</span>
                   </div>
                   <button
                     className="w-full rounded-lg border px-2 py-1 text-xs sm:w-auto"
                     onClick={() => {
-                      setWindowOpen(
-                        g.window ? fromMinutes(g.window.openMin) : "09:00"
-                      );
-                      setWindowClose(
-                        g.window ? fromMinutes(g.window.closeMin) : "18:00"
-                      );
-                      const mapping: Record<number, boolean> = {
-                        0: false,
-                        1: false,
-                        2: false,
-                        3: false,
-                        4: false,
-                        5: false,
-                        6: false,
-                      };
+                      setWindowOpen(g.window ? fromMinutes(g.window.openMin) : "09:00");
+                      setWindowClose(g.window ? fromMinutes(g.window.closeMin) : "18:00");
+                      const mapping: Record<number, boolean> = { 0: false, 1: false, 2: false, 3: false, 4: false, 5: false, 6: false };
                       g.days.forEach((d) => (mapping[d] = true));
                       setWindowDays(mapping);
                     }}
@@ -810,49 +607,25 @@ export default function RoutinePage() {
 
       {/* 2) Block Composer */}
       <section className="rounded-2xl border p-4">
-        <h2 className="mb-3 text-lg font-semibold">
-          2) Compose Block (breaks → sprints)
-        </h2>
-        <p className="text-sm text-gray-600">
-          Pick days, add breaks inside the block, generate sprints. Conflicts are
-          checked before adding & on push.
-        </p>
+        <h2 className="mb-3 text-lg font-semibold">2) Compose Block (breaks → sprints)</h2>
+        <p className="text-sm text-gray-600">Pick days, add breaks inside the block, generate sprints. Conflicts are checked before adding & on push.</p>
 
         <div className="mt-3 grid gap-3 sm:grid-cols-6">
           <label className="space-y-1 sm:col-span-2">
             <span className="text-sm text-gray-500">Block name (optional)</span>
-            <input
-              className="w-full rounded-lg border px-3 py-2"
-              value={bLabel}
-              onChange={(e) => setBLabel(e.target.value)}
-              placeholder="e.g. Research Focus"
-            />
+            <input className="w-full rounded-lg border px-3 py-2" value={bLabel} onChange={(e) => setBLabel(e.target.value)} placeholder="e.g. Research Focus" />
           </label>
           <label className="space-y-1">
             <span className="text-sm text-gray-500">Start</span>
-            <input
-              type="time"
-              className="w-full rounded-lg border px-3 py-2"
-              value={bStart}
-              onChange={(e) => setBStart(e.target.value)}
-            />
+            <input type="time" className="w-full rounded-lg border px-3 py-2" value={bStart} onChange={(e) => setBStart(e.target.value)} />
           </label>
           <label className="space-y-1">
             <span className="text-sm text-gray-500">End</span>
-            <input
-              type="time"
-              className="w-full rounded-lg border px-3 py-2"
-              value={bEnd}
-              onChange={(e) => setBEnd(e.target.value)}
-            />
+            <input type="time" className="w-full rounded-lg border px-3 py-2" value={bEnd} onChange={(e) => setBEnd(e.target.value)} />
           </label>
           <label className="space-y-1">
             <span className="text-sm text-gray-500">Depth</span>
-            <select
-              className="w-full rounded-lg border px-3 py-2"
-              value={bDepth}
-              onChange={(e) => setBDepth(Number(e.target.value) as Depth)}
-            >
+            <select className="w-full rounded-lg border px-3 py-2" value={bDepth} onChange={(e) => setBDepth(Number(e.target.value) as Depth)}>
               <option value={3}>L3 (Deep)</option>
               <option value={2}>L2 (Medium)</option>
               <option value={1}>L1 (Light)</option>
@@ -860,19 +633,9 @@ export default function RoutinePage() {
           </label>
           <label className="space-y-1">
             <span className="text-sm text-gray-500">Goal</span>
-            <select
-              className="w-full rounded-lg border px-3 py-2"
-              value={bGoalId}
-              onChange={(e) =>
-                setBGoalId(e.target.value ? Number(e.target.value) : "")
-              }
-            >
+            <select className="w-full rounded-lg border px-3 py-2" value={bGoalId} onChange={(e) => setBGoalId(e.target.value ? Number(e.target.value) : "")}>
               <option value="">Pick goal</option>
-              {goals.map((g) => (
-                <option key={g.id} value={g.id}>
-                  {g.label}
-                </option>
-              ))}
+              {goals.map((g) => (<option key={g.id} value={g.id}>{g.label}</option>))}
             </select>
           </label>
         </div>
@@ -884,65 +647,19 @@ export default function RoutinePage() {
             {WEEKDAYS.map((w, i) => (
               <button
                 key={w}
-                onClick={() =>
-                  setComposerDays((s) => ({
-                    ...s,
-                    [i]: !s[i],
-                  }))
-                }
-                className={`rounded-lg px-3 py-1.5 text-sm ring-1 ring-gray-200 ${
-                  composerDays[i] ? "bg-black text-white" : "bg-white"
-                }`}
+                onClick={() => setComposerDays((s) => ({ ...s, [i]: !s[i] }))}
+                className={`rounded-lg px-3 py-1.5 text-sm ring-1 ring-gray-200 ${composerDays[i] ? "bg-black text-white" : "bg-white"}`}
               >
                 {w}
               </button>
             ))}
-            <button
-              onClick={() =>
-                setComposerDays({
-                  0: false,
-                  1: true,
-                  2: true,
-                  3: true,
-                  4: true,
-                  5: true,
-                  6: false,
-                })
-              }
-              className="rounded-lg border px-3 py-1.5 text-sm"
-            >
+            <button onClick={() => setComposerDays({ 0: false, 1: true, 2: true, 3: true, 4: true, 5: true, 6: false })} className="rounded-lg border px-3 py-1.5 text-sm">
               Weekdays
             </button>
-            <button
-              onClick={() =>
-                setComposerDays({
-                  0: true,
-                  1: false,
-                  2: false,
-                  3: false,
-                  4: false,
-                  5: false,
-                  6: true,
-                })
-              }
-              className="rounded-lg border px-3 py-1.5 text-sm"
-            >
+            <button onClick={() => setComposerDays({ 0: true, 1: false, 2: false, 3: false, 4: false, 5: false, 6: true })} className="rounded-lg border px-3 py-1.5 text-sm">
               Weekends
             </button>
-            <button
-              onClick={() =>
-                setComposerDays({
-                  0: true,
-                  1: true,
-                  2: true,
-                  3: true,
-                  4: true,
-                  5: true,
-                  6: true,
-                })
-              }
-              className="rounded-lg border px-3 py-1.5 text-sm"
-            >
+            <button onClick={() => setComposerDays({ 0: true, 1: true, 2: true, 3: true, 4: true, 5: true, 6: true })} className="rounded-lg border px-3 py-1.5 text-sm">
               All
             </button>
           </div>
@@ -954,47 +671,22 @@ export default function RoutinePage() {
           <div className="grid gap-3 sm:grid-cols-5">
             <label className="space-y-1">
               <span className="text-sm text-gray-500">Break start</span>
-              <input
-                type="time"
-                className="w-full rounded-lg border px-3 py-2"
-                value={cbStart}
-                onChange={(e) => setCbStart(e.target.value)}
-              />
+              <input type="time" className="w-full rounded-lg border px-3 py-2" value={cbStart} onChange={(e) => setCbStart(e.target.value)} />
             </label>
             <label className="space-y-1">
               <span className="text-sm text-gray-500">Break end</span>
-              <input
-                type="time"
-                className="w-full rounded-lg border px-3 py-2"
-                value={cbEnd}
-                onChange={(e) => setCbEnd(e.target.value)}
-              />
+              <input type="time" className="w-full rounded-lg border px-3 py-2" value={cbEnd} onChange={(e) => setCbEnd(e.target.value)} />
             </label>
             <div className="flex items-end sm:col-span-3">
-              <button
-                onClick={addComposerBreak}
-                className="w-full rounded-lg border px-3 py-2"
-              >
-                Add Break
-              </button>
+              <button onClick={addComposerBreak} className="w-full rounded-lg border px-3 py-2">Add Break</button>
             </div>
           </div>
           {composerBreaks.length > 0 && (
             <div className="mt-3 space-y-2">
               {composerBreaks.map((br, i) => (
-                <div
-                  key={i}
-                  className="flex flex-col gap-2 rounded border p-2 text-sm sm:flex-row sm:items-center sm:justify-between"
-                >
-                  <div>
-                    {fromMinutes(br.s)}—{fromMinutes(br.e)}
-                  </div>
-                  <button
-                    className="w-full rounded-lg border px-2 py-1 sm:w-auto"
-                    onClick={() => removeComposerBreak(i)}
-                  >
-                    Remove
-                  </button>
+                <div key={i} className="flex flex-col gap-2 rounded border p-2 text-sm sm:flex-row sm:items-center sm:justify-between">
+                  <div>{fromMinutes(br.s)}—{fromMinutes(br.e)}</div>
+                  <button className="w-full rounded-lg border px-2 py-1 sm:w-auto" onClick={() => removeComposerBreak(i)}>Remove</button>
                 </div>
               ))}
             </div>
@@ -1002,19 +694,11 @@ export default function RoutinePage() {
         </div>
 
         <div className="flex flex-col gap-2 pt-3 sm:flex-row">
-          <button
-            onClick={addBlockWithBreaks}
-            className="w-full rounded-lg bg-black px-4 py-2 text-white sm:w-auto"
-          >
+          <button onClick={addBlockWithBreaks} className="w-full rounded-lg bg-black px-4 py-2 text-white sm:w-auto">
             Generate sprints for this block
           </button>
-          {lastAddedIndex && (
-            <span className="text-sm text-emerald-700">Block {lastAddedIndex} set ✓</span>
-          )}
-          <button
-            onClick={clearDraft}
-            className="w-full rounded-lg border px-4 py-2 sm:w-auto"
-          >
+          {lastAddedIndex && <span className="text-sm text-emerald-700">Block {lastAddedIndex} set ✓</span>}
+          <button onClick={clearDraft} className="w-full rounded-lg border px-4 py-2 sm:w-auto">
             Clear Draft
           </button>
         </div>
@@ -1031,13 +715,10 @@ export default function RoutinePage() {
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <div className="text-sm">
                       <div className="font-medium">
-                        Block {idx + 1}: {fromMinutes(g.startMin)}—{fromMinutes(g.endMin)}{" "}
-                        {g.label ? `• ${g.label}` : ""}
+                        Block {idx + 1}: {fromMinutes(g.startMin)}—{fromMinutes(g.endMin)} {g.label ? `• ${g.label}` : ""}
                       </div>
                       <div className="text-gray-500">
-                        L{g.depthLevel} •{" "}
-                        {goals.find((x) => x.id === g.goalId)?.label ??
-                          `Goal #${g.goalId}`}
+                        L{g.depthLevel} • {goals.find((x) => x.id === g.goalId)?.label ?? `Goal #${g.goalId}`}
                       </div>
                     </div>
                     <button
@@ -1060,9 +741,7 @@ export default function RoutinePage() {
 
                   <div className="mt-3 grid gap-2 sm:grid-cols-2">
                     <div>
-                      <div className="text-xs font-semibold text-gray-600">
-                        Sprints
-                      </div>
+                      <div className="text-xs font-semibold text-gray-600">Sprints</div>
                       <ul className="mt-1 space-y-1 text-sm">
                         {g.sprints.map((sp, i) => (
                           <li key={i} className="rounded border px-2 py-1">
@@ -1072,9 +751,7 @@ export default function RoutinePage() {
                       </ul>
                     </div>
                     <div>
-                      <div className="text-xs font-semibold text-gray-600">
-                        Breaks
-                      </div>
+                      <div className="text-xs font-semibold text-gray-600">Breaks</div>
                       {g.breaks.length === 0 ? (
                         <div className="mt-1 text-sm text-gray-500">No breaks</div>
                       ) : (
@@ -1103,34 +780,20 @@ export default function RoutinePage() {
                               if (exists) {
                                 setGroups((prev) => {
                                   const next = [...prev];
-                                  next[idx] = {
-                                    ...g,
-                                    days: g.days.filter((d) => d !== i),
-                                  };
+                                  next[idx] = { ...g, days: g.days.filter((d) => d !== i) };
                                   return next;
                                 });
                               } else {
                                 const win = windowsByDay[i];
                                 const ex = existingByDay[i] ?? [];
-                                const outside = win
-                                  ? g.sprints.some(
-                                      (sp) =>
-                                        sp.s < win.openMin || sp.e > win.closeMin
-                                    )
-                                  : false;
-                                const hasOv = g.sprints.some((sp) =>
-                                  ex.some((it) =>
-                                    overlaps(sp.s, sp.e, it.startMin, it.endMin)
-                                  )
-                                );
+                                const outside = win ? g.sprints.some((sp) => sp.s < win.openMin || sp.e > win.closeMin) : false;
+                                const hasOv = g.sprints.some((sp) => ex.some((it) => overlaps(sp.s, sp.e, it.startMin, it.endMin)));
                                 if (outside || hasOv) {
                                   askConfirm({
                                     title: `Conflicts on ${WEEKDAYS[i]} — add day?`,
                                     body: (
                                       <div className="text-sm">
-                                        {outside && (
-                                          <div>• One or more sprints outside day window</div>
-                                        )}
+                                        {outside && <div>• One or more sprints outside day window</div>}
                                         {hasOv && <div>• Overlaps existing blocks</div>}
                                       </div>
                                     ),
@@ -1138,10 +801,7 @@ export default function RoutinePage() {
                                     onConfirm: () => {
                                       setGroups((prev) => {
                                         const next = [...prev];
-                                        next[idx] = {
-                                          ...g,
-                                          days: [...g.days, i].sort((a, b) => a - b),
-                                        };
+                                        next[idx] = { ...g, days: [...g.days, i].sort((a, b) => a - b) };
                                         return next;
                                       });
                                       setConfirmOpen(false);
@@ -1150,18 +810,13 @@ export default function RoutinePage() {
                                 } else {
                                   setGroups((prev) => {
                                     const next = [...prev];
-                                    next[idx] = {
-                                      ...g,
-                                      days: [...g.days, i].sort((a, b) => a - b),
-                                    };
+                                    next[idx] = { ...g, days: [...g.days, i].sort((a, b) => a - b) };
                                     return next;
                                   });
                                 }
                               }
                             }}
-                            className={`rounded-lg px-2.5 py-1 text-xs ring-1 ring-gray-200 ${
-                              on ? "bg-black text-white" : "bg-white"
-                            }`}
+                            className={`rounded-lg px-2.5 py-1 text-xs ring-1 ring-gray-200 ${on ? "bg-black text-white" : "bg-white"}`}
                           >
                             {w}
                           </button>
@@ -1179,13 +834,8 @@ export default function RoutinePage() {
       {/* 3) Push */}
       <section className="rounded-2xl border p-4">
         <h2 className="mb-3 text-lg font-semibold">3) Push Draft</h2>
-        <p className="text-sm text-gray-600">
-          We’ll warn on overlaps before writing (overwrite requires confirmation).
-        </p>
-        <button
-          onClick={pushDraft}
-          className="mt-2 w-full rounded-lg bg-emerald-600 px-4 py-2 text-white sm:w-auto"
-        >
+        <p className="text-sm text-gray-600">We’ll warn on overlaps before writing (overwrite requires confirmation).</p>
+        <button onClick={pushDraft} className="mt-2 w-full rounded-lg bg-emerald-600 px-4 py-2 text-white sm:w-auto">
           Push drafted to selected days
         </button>
       </section>
@@ -1200,10 +850,7 @@ export default function RoutinePage() {
             return (
               <div key={d} className="rounded-xl border p-3">
                 <div className="mb-1 text-sm text-gray-600">
-                  Day: <b>{WEEKDAYS[day]}</b> • Window:{" "}
-                  {win
-                    ? `${fromMinutes(win.openMin)}–${fromMinutes(win.closeMin)}`
-                    : "not set"}
+                  Day: <b>{WEEKDAYS[day]}</b> • Window: {win ? `${fromMinutes(win.openMin)}–${fromMinutes(win.closeMin)}` : "not set"}
                 </div>
                 {items.length === 0 ? (
                   <div className="text-sm text-gray-500">No blocks.</div>
@@ -1211,17 +858,13 @@ export default function RoutinePage() {
                   <ul className="mt-1 space-y-1 text-sm">
                     {items.map((it) => (
                       <li key={it.id} className="rounded border px-2 py-1">
-                        {fromMinutes(it.startMin)}–{fromMinutes(it.endMin)}{" "}
-                        {it.label ? `• ${it.label}` : ""} (L{it.depthLevel})
+                        {fromMinutes(it.startMin)}–{fromMinutes(it.endMin)} {it.label ? `• ${it.label}` : ""} (L{it.depthLevel})
                       </li>
                     ))}
                   </ul>
                 )}
                 <div className="mt-2">
-                  <button
-                    className="w-full rounded-lg border px-3 py-1.5 text-xs sm:w-auto"
-                    onClick={() => clearDay(day)}
-                  >
+                  <button className="w-full rounded-lg border px-3 py-1.5 text-xs sm:w-auto" onClick={() => clearDay(day)}>
                     Clear this day
                   </button>
                 </div>
@@ -1239,9 +882,7 @@ export default function RoutinePage() {
         confirmText={confirmText}
         destructive={confirmDestructive}
         onCancel={() => setConfirmOpen(false)}
-        onConfirm={() => {
-          confirmActionRef.current?.();
-        }}
+        onConfirm={() => { confirmActionRef.current?.(); }}
       />
     </div>
   );

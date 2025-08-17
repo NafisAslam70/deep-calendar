@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -12,16 +12,18 @@ export const metadata: Metadata = {
     apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
   },
   manifest: "/manifest.json",
+};
+
+// Next 15: themeColor belongs in `viewport`
+export const viewport: Viewport = {
   themeColor: "#111827",
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <head>
-        {/* viewport for mobile */}
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-      </head>
       <body className="bg-white text-gray-900">{children}</body>
     </html>
   );

@@ -1,0 +1,6 @@
+deepcalendar-mobile/**
+**/android/**
+**/ios/**
+**/.expo/**
+**/.eas/**
+**/node_modules/**

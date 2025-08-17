@@ -5,33 +5,26 @@
     "scheme": "deepcalendar",
     "version": "1.0.0",
     "orientation": "portrait",
+    "icon": "./assets/icon.png",
     "splash": {
+      "image": "./assets/splash.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
-    "runtimeVersion": {
-      "policy": "sdkVersion"
-    },
-    "plugins": [
-      "expo-router"
-    ],
-    "ios": {
-      "supportsTablet": true,
-      "bundleIdentifier": "com.nafis.deepcalendar"
-    },
     "android": {
-      "package": "com.nafis.deepcalendar"
+      "package": "com.nafis.deepcalendar",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      }
     },
-    "web": {
-      "bundler": "metro"
-    },
+    "plugins": ["expo-router"],
+    "runtimeVersion": { "policy": "sdkVersion" },
     "extra": {
-      "router": {
-        "origin": false
-      },
       "eas": {
         "projectId": "57239f20-d1a6-404c-83d2-73fc33571d2c"
       }
     }
   }
 }
+

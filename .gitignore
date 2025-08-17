@@ -39,3 +39,13 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# --- DeepCalendar Mobile (Expo) ---
+deepcalendar-mobile/node_modules
+deepcalendar-mobile/.expo
+deepcalendar-mobile/.eas
+deepcalendar-mobile/android
+deepcalendar-mobile/ios
+deepcalendar-mobile/dist
+deepcalendar-mobile/web-build
+deepcalendar-mobile/.DS_Store

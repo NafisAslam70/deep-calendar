@@ -35,3 +35,23 @@ yarn-error.*
 
 # typescript
 *.tsbuildinfo
+android/
+ios/
+
+# EAS local state
+.eas/
+
+# Android build caches
+.gradle/
+build/
+
+# Android Studio / IDE
+.idea/
+*.iml
+
+# (Optional) VS Code workspace junk
+.vscode/
+
+# (Optional) Keystore variants some teams use
+*.keystore
+*.keystore.properties

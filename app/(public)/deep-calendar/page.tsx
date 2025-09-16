@@ -67,7 +67,7 @@ export default function DeepCalendarPage() {
   const [windowsByDay, setWindowsByDay] = useState<Record<number, RoutineWindow>>({});
   const [routineByDay, setRoutineByDay] = useState<Record<number, RoutineItem[]>>({});
 
-  // Today override (if there's a Single-Day Plan)
+  // Today override (if there&apos;s a Single-Day Plan)
   const todayIdx = new Date().getDay();
   const [todayOverrideItems, setTodayOverrideItems] = useState<RoutineItem[] | null>(null);
   const [todayHasSingleDay, setTodayHasSingleDay] = useState<boolean>(false);

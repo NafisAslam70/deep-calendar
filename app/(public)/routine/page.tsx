@@ -246,7 +246,7 @@ export default function RoutinePage() {
     0: true, 1: true, 2: true, 3: true, 4: true, 5: true, 6: true,
   });
 
-  // If a weekday is locked, make sure it's not preselected in editors
+  // If a weekday is locked, make sure it&apos;s not preselected in editors
   useEffect(() => {
     if (lockedWeekdays.size) {
       setWindowDays((s) => {
@@ -283,7 +283,7 @@ export default function RoutinePage() {
     const locked = days.filter((d) => lockedWeekdays.has(d));
     if (locked.length) {
       askConfirm({
-        title: "Can't change window for an opened day",
+  title: "Can&apos;t change window for an opened day",
         body: `Locked: ${locked.map((d) => WEEKDAYS[d]).join(", ")} (day is opened).`,
         onConfirm: () => setConfirmOpen(false),
       });
@@ -525,7 +525,7 @@ export default function RoutinePage() {
     if (locked.length) {
       askConfirm({
         title: "Day is opened — locked",
-        body: `Can't draft for: ${locked.map((d) => WEEKDAYS[d]).join(", ")}.`,
+  body: `Can&apos;t draft for: ${locked.map((d) => WEEKDAYS[d]).join(", ")}.`,
         onConfirm: () => setConfirmOpen(false),
       });
       return;
@@ -620,14 +620,14 @@ export default function RoutinePage() {
       const lockedUsed = Array.from(byDay.keys()).filter((d) => lockedWeekdays.has(d));
       if (lockedUsed.length) {
         askConfirm({
-          title: "Can't push to opened day",
+          title: "Can&apos;t push to opened day",
           body: `Locked: ${lockedUsed.map((d) => WEEKDAYS[d]).join(", ")}`,
           onConfirm: () => setConfirmOpen(false),
         });
         return;
       }
 
-      // Window-aware clip (ensure we don't write outside window if set)
+  // Window-aware clip (ensure we don&apos;t write outside window if set)
       const clippedByDay = new Map<number, Array<{ startMin: number; endMin: number; depthLevel: Depth; goalId: number; label?: string }>>();
       for (const [wd, items] of byDay.entries()) {
         const base = windowRangeForDay(wd) ?? FULL_DAY;
@@ -817,7 +817,7 @@ export default function RoutinePage() {
       askConfirm({
         title: `Finalize Only-Today Plan (${dateISO})?`,
         confirmText: "Finalize",
-        body: "No conflicts detected. We'll merge your plan into the day.",
+  body: "No conflicts detected. We&apos;ll merge your plan into the day.",
         onConfirm: doMergeNoOverwrite,
       });
     }
@@ -838,7 +838,7 @@ export default function RoutinePage() {
   async function clearDay(wd: number) {
     if (lockedWeekdays.has(wd)) {
       askConfirm({
-        title: "Can't clear opened day",
+  title: "Can&apos;t clear opened day",
         body: `${WEEKDAYS[wd]} is locked because the day is opened.`,
         onConfirm: () => setConfirmOpen(false),
       });

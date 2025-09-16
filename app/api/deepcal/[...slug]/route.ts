@@ -173,10 +173,10 @@ export async function GET(req: NextRequest, ctx: Ctx) {
         endMin: b.endMin,
         depthLevel: b.depthLevel as Depth,
         goalId: b.goalId ?? undefined,
-        label: (b as any).label ?? undefined,
+        label: (b as typeof blocks.$inferSelect).label ?? undefined,
         status: b.status as "planned" | "active" | "done" | "skipped",
         actualSec: b.actualSec,
-        source: (b as any).source as "standing" | "single-day",
+        source: (b as typeof blocks.$inferSelect).source as "standing" | "single-day",
       })),
     };
     return NextResponse.json({ pack });
@@ -257,7 +257,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
 
     if (dayRow) {
       const existingBlocks = await db.select().from(blocks).where(eq(blocks.dayId, dayRow.id));
-      existingRanges = existingBlocks.map((b) => ({ startMin: b.startMin, endMin: b.endMin, label: (b as any).label ?? null }));
+  existingRanges = existingBlocks.map((b) => ({ startMin: b.startMin, endMin: b.endMin, label: (b as typeof blocks.$inferSelect).label ?? null }));
     } else {
       const wd = dayOfWeekFromISO(dateISO);
       const standing = await db.select().from(routines).where(and(eq(routines.userId, uid), eq(routines.weekday, wd)));

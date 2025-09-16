@@ -20,6 +20,20 @@ type RoutineResponse = {
   items: RoutineItem[];
 };
 
+/* Today pack (minimal) */
+type DayBlock = {
+  id: number;
+  startMin: number;
+  endMin: number;
+  depthLevel: Depth;
+  label?: string | null;
+  /** server sends "standing" | "single-day" */
+  source?: "standing" | "single-day";
+};
+type DayPackResp = {
+  pack: { blocks: DayBlock[] } | null;
+};
+
 type ApiResp<T> = { ok: boolean; status: number; json: T };
 async function apiJson<T>(input: RequestInfo, init?: RequestInit): Promise<ApiResp<T>> {
   const r = await fetch(input, init);
@@ -41,6 +55,10 @@ const nowInMinutesLocal = () => {
   const n = new Date();
   return n.getHours() * 60 + n.getMinutes();
 };
+const todayISO = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
 
 export default function DeepCalendarPage() {
   const router = useRouter();
@@ -48,6 +66,11 @@ export default function DeepCalendarPage() {
 
   const [windowsByDay, setWindowsByDay] = useState<Record<number, RoutineWindow>>({});
   const [routineByDay, setRoutineByDay] = useState<Record<number, RoutineItem[]>>({});
+
+  // Today override (if there's a Single-Day Plan)
+  const todayIdx = new Date().getDay();
+  const [todayOverrideItems, setTodayOverrideItems] = useState<RoutineItem[] | null>(null);
+  const [todayHasSingleDay, setTodayHasSingleDay] = useState<boolean>(false);
 
   useEffect(() => {
     if (authState === "anon")
@@ -81,9 +104,40 @@ export default function DeepCalendarPage() {
     setWindowsByDay(wmap);
   }, []);
 
+  // Load today's pack and override if Single-Day Plan exists
+  const loadTodayPack = useCallback(async () => {
+    const date = todayISO();
+    const res = await apiJson<DayPackResp>(`/api/deepcal/day?date=${encodeURIComponent(date)}`);
+    if (!res.ok) {
+      setTodayOverrideItems(null);
+      setTodayHasSingleDay(false);
+      return;
+    }
+    const blocks = res.json.pack?.blocks ?? [];
+    const hasSingleDay = blocks.some((b) => b.source === "single-day");
+    setTodayHasSingleDay(hasSingleDay);
+
+    if (hasSingleDay) {
+      const mapped: RoutineItem[] = blocks
+        .slice()
+        .sort((a, b) => a.startMin - b.startMin)
+        .map((b) => ({
+          id: b.id,
+          startMin: b.startMin,
+          endMin: b.endMin,
+          depthLevel: b.depthLevel,
+          label: b.label ?? null,
+        }));
+      setTodayOverrideItems(mapped);
+    } else {
+      setTodayOverrideItems(null);
+    }
+  }, []);
+
   useEffect(() => {
     void loadAllRoutine();
-  }, [loadAllRoutine]);
+    void loadTodayPack();
+  }, [loadAllRoutine, loadTodayPack]);
 
   // Group identical windows to reduce redundancy summary
   const groupedWindows = useMemo(() => {
@@ -126,7 +180,6 @@ export default function DeepCalendarPage() {
   }, [weeklyRange]);
 
   // "Now" indicator
-  const todayIdx = new Date().getDay();
   const [nowMin, setNowMin] = useState<number>(nowInMinutesLocal());
   useEffect(() => {
     const id = setInterval(() => setNowMin(nowInMinutesLocal()), 60 * 1000);
@@ -159,12 +212,36 @@ export default function DeepCalendarPage() {
     );
   }
 
+  // Helper to choose items for a given day (override "today" if Single-Day Plan exists)
+  const getItemsForDay = (day: number) => {
+    if (day === todayIdx && todayOverrideItems) return todayOverrideItems;
+    return routineByDay[day] ?? [];
+  };
+
+  // Plan-kind helpers
+  const isSingleForDay = (day: number) => day === todayIdx && !!todayOverrideItems;
+  const DayPlanBadge = ({ day }: { day: number }) => {
+    const single = isSingleForDay(day);
+    return (
+      <span
+        className={`ml-2 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] ${
+          single ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-700"
+        }`}
+        title={single ? "Single-Day Plan" : "Standing Routine"}
+      >
+        {single ? "Single-Day Plan" : "Standing"}
+      </span>
+    );
+  };
+
   return (
     <div className="mx-auto max-w-6xl p-5">
       {/* Header */}
       <div className="mb-4">
         <h1 className="text-2xl font-bold">Your Deep Calendar</h1>
-        <p className="text-sm text-gray-600">Weekly view on desktop · single-day view on mobile.</p>
+        <p className="text-sm text-gray-600">
+          Weekly view on desktop · single-day view on mobile.
+        </p>
       </div>
 
       {/* Windows summary */}
@@ -222,7 +299,12 @@ export default function DeepCalendarPage() {
         <div className="overflow-hidden rounded-2xl border">
           <div className="grid grid-cols-6 border-b bg-gray-50 text-sm">
             <div className="col-span-2 p-2 text-gray-500">Time</div>
-            <div className="col-span-4 border-l p-2 font-medium">{WEEKDAYS[dayMobile]}</div>
+            <div className="col-span-4 border-l p-2 font-medium">
+              <div className="flex items-center">
+                <span>{WEEKDAYS[dayMobile]}</span>
+                <DayPlanBadge day={dayMobile} />
+              </div>
+            </div>
           </div>
 
           <div className="relative grid grid-cols-6">
@@ -274,7 +356,7 @@ export default function DeepCalendarPage() {
                 )}
 
               {/* blocks */}
-              {(routineByDay[dayMobile] ?? []).map((it, idx) => {
+              {getItemsForDay(dayMobile).map((it, idx) => {
                 const { border, bg } = depthColors(it.depthLevel);
                 const top = (it.startMin - dayRange.start) * pxPerMinMobile;
                 const height = Math.max(20, (it.endMin - it.startMin) * pxPerMinMobile);
@@ -308,7 +390,7 @@ export default function DeepCalendarPage() {
 
         {/* Mobile controls */}
         <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-          <button className="w-full rounded-lg border px-3 py-1.5 text-sm sm:w-auto" onClick={loadAllRoutine}>
+          <button className="w-full rounded-lg border px-3 py-1.5 text-sm sm:w-auto" onClick={() => { void loadAllRoutine(); void loadTodayPack(); }}>
             Refresh
           </button>
         </div>
@@ -320,8 +402,11 @@ export default function DeepCalendarPage() {
           <div className="grid min-w-[760px] grid-cols-8 border-b bg-gray-50 text-sm">
             <div className="p-2 text-gray-500">Time</div>
             {WEEKDAYS.map((w, i) => (
-              <div key={w} className={`border-l p-2 font-medium ${i === todayIdx ? "bg-gray-100" : ""}`}>
-                {w}
+              <div key={w} className={`border-l p-2 ${i === todayIdx ? "bg-gray-100" : ""}`}>
+                <div className="flex items-center font-medium">
+                  <span>{w}</span>
+                  <DayPlanBadge day={i} />
+                </div>
               </div>
             ))}
           </div>
@@ -344,7 +429,7 @@ export default function DeepCalendarPage() {
             {/* days */}
             {WEEKDAYS.map((w, day) => {
               const win = windowsByDay[day];
-              const items = (routineByDay[day] ?? []) as RoutineItem[];
+              const items = getItemsForDay(day);
 
               const showNow =
                 day === todayIdx &&
@@ -412,7 +497,13 @@ export default function DeepCalendarPage() {
         </div>
 
         <div className="mt-4">
-          <button className="rounded-lg border px-3 py-1.5 text-sm" onClick={loadAllRoutine}>
+          <button
+            className="rounded-lg border px-3 py-1.5 text-sm"
+            onClick={() => {
+              void loadAllRoutine();
+              void loadTodayPack();
+            }}
+          >
             Refresh
           </button>
         </div>

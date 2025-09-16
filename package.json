@@ -21,7 +21,8 @@
     "next-auth": "^4.24.11",
     "pg": "^8.16.3",
     "react": "19.1.0",
-    "react-dom": "19.1.0"
+    "react-dom": "19.1.0",
+    "expo-linear-gradient": "~13.0.2"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",

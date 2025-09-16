@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import WalkthroughTour from "./_components/WalkthroughTour";
 
 /* ---------- Types ---------- */
 type AuthState = "loading" | "authed" | "anon";
@@ -14,6 +15,10 @@ type Block = {
   endMin: number;
   depthLevel: Depth;
   goalId?: number;
+  /** single-day tasks may carry a label */
+  label?: string | null;
+  /** NEW: origin source (returned by API) */
+  source?: "standing" | "single-day";
   status: "planned" | "active" | "done" | "skipped";
   actualSec: number;
 };
@@ -52,7 +57,7 @@ async function apiJson<T>(input: RequestInfo, init?: RequestInit): Promise<ApiRe
   return { ok: r.ok, status: r.status, json: j };
 }
 
-/* small pill */
+/* small pills */
 function DepthPill({ d }: { d: Depth }) {
   const label = d === 1 ? "L1 (Light)" : d === 2 ? "L2 (Medium)" : "L3 (Deep)";
   const cls =
@@ -61,6 +66,16 @@ function DepthPill({ d }: { d: Depth }) {
     <span
       className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs text-white ${cls}`}
     >
+      {label}
+    </span>
+  );
+}
+function SourcePill({ s }: { s: Block["source"] }) {
+  const label = s === "single-day" ? "Single-Day" : "Standing";
+  const cls =
+    s === "single-day" ? "bg-amber-600" : "bg-slate-700";
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs text-white ${cls}`}>
       {label}
     </span>
   );
@@ -111,6 +126,9 @@ function ConfirmDialog({
 /* ---------- Page ---------- */
 export default function DashboardPage() {
   const router = useRouter();
+
+  // Walkthrough
+  const [tourOpen, setTourOpen] = useState(false);
 
   // Auth
   const [auth, setAuth] = useState<AuthState>("loading");
@@ -187,17 +205,13 @@ export default function DashboardPage() {
   const canOpenNow = useMemo(() => {
     if (!windowToday) return true; // if no window, allow (or ask to set routine)
     const start = windowToday.openMin;
-    return (
-      nowMin >= start - OPEN_GRACE_BEFORE && nowMin <= start + OPEN_GRACE_AFTER
-    );
+    return nowMin >= start - OPEN_GRACE_BEFORE && nowMin <= start + OPEN_GRACE_AFTER;
   }, [windowToday, nowMin]);
 
   const inCloseWindow = useMemo(() => {
     if (!windowToday) return false;
     const end = windowToday.closeMin;
-    return (
-      nowMin >= end - CLOSE_GRACE_BEFORE && nowMin <= end + CLOSE_GRACE_AFTER
-    );
+    return nowMin >= end - CLOSE_GRACE_BEFORE && nowMin <= end + CLOSE_GRACE_AFTER;
   }, [windowToday, nowMin]);
 
   const goalMap = useMemo(
@@ -210,6 +224,26 @@ export default function DashboardPage() {
     const b = pack.blocks.find((b) => b.startMin <= nowMin && nowMin < b.endMin);
     return b ?? null;
   }, [pack, nowMin]);
+
+  // Helpers to display task/goal
+  const renderTaskOrGoal = (b: Block) => {
+    if (b.label && b.label.trim()) return b.label.trim();
+    if (b.goalId) return goalMap[b.goalId]?.label ?? `Goal #${b.goalId}`;
+    return "No task/goal";
+  };
+
+  // Plan summary (Standing vs Single-Day vs Mixed)
+  const planSummary = useMemo(() => {
+    if (!pack?.blocks?.length) return null;
+    let single = 0, standing = 0;
+    for (const b of pack.blocks) {
+      if (b.source === "single-day") single++;
+      else standing++;
+    }
+    if (single && !standing) return { label: "Single-Day Plan (today only)", badge: "bg-amber-100 text-amber-800" };
+    if (standing && !single) return { label: "Standing Routine", badge: "bg-slate-100 text-slate-800" };
+    return { label: "Mixed: Standing + Single-Day", badge: "bg-indigo-100 text-indigo-800" };
+  }, [pack?.blocks]);
 
   // Open Day
   async function openDay() {
@@ -253,7 +287,8 @@ export default function DashboardPage() {
         id: b.id,
         time: `${fromMinutes(b.startMin)}–${fromMinutes(b.endMin)}`,
         depth: b.depthLevel,
-        goal: b.goalId ? goalMap[b.goalId]?.label ?? `#${b.goalId}` : null,
+        taskOrGoal: renderTaskOrGoal(b),
+        source: b.source ?? "standing",
         status: b.status,
         note: logNote[b.id]?.trim() || null,
       })),
@@ -321,18 +356,67 @@ export default function DashboardPage() {
   const showOpenPanel = !pack?.openedAt;
   const showShutdownPanel = !!pack?.openedAt && !pack?.shutdownAt;
 
+  // Walkthrough steps
+  const tourSteps = [
+    {
+      selector: "#dash-header",
+      title: "Welcome to DeepCal",
+      body:
+        "This dashboard is your daily cockpit. Open your day, track active blocks, and log a quick shutdown report.",
+    },
+    {
+      selector: "#routine-window-section",
+      title: "Day Window",
+      body:
+        "Your Standing Routine’s open/close window for today. The app uses it to gate opening/closing and to limit one-off plans.",
+    },
+    {
+      selector: "#open-day-section",
+      title: "Open Your Day",
+      body:
+        "Start your workday here. By default, opening is allowed only close to your configured start time.",
+    },
+    {
+      selector: "#now-section",
+      title: "Now",
+      body:
+        "Shows the current block (if any). You can quickly mark it Active/Done/Skipped from here.",
+    },
+    {
+      selector: "#blocks-section",
+      title: "Today’s Blocks",
+      body:
+        "All blocks for today, from Standing Routine and any Single-Day Plans. Look for the small Standing / Single-Day pills.",
+    },
+    {
+      selector: "#shutdown-section",
+      title: "Shutdown Report",
+      body:
+        "Wrap up with quick notes per block and an optional daily journal. This stores a JSON summary in your logs.",
+    },
+  ];
+
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-5">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold">Dashboard</h1>
-        <p className="text-sm text-gray-600">
-          Your day at a glance • {WEEKDAYS[new Date().getDay()]}, {todayISO()}
-        </p>
+      <div id="dash-header" className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Dashboard</h1>
+          <p className="text-sm text-gray-600">
+            Your day at a glance • {WEEKDAYS[new Date().getDay()]}, {todayISO()}
+          </p>
+        </div>
+        <button
+          className="rounded-lg border px-3 py-1.5 text-sm"
+          onClick={() => setTourOpen(true)}
+          title="Open walkthrough"
+        >
+          Walkthrough
+        </button>
       </div>
 
       {/* Routine window info + open/closed timestamps (as tiles) */}
-      <section className="rounded-2xl border p-4">
+      <section id="routine-window-section" className="rounded-2xl border p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="text-sm text-gray-500">Routine window (today)</div>
@@ -376,11 +460,23 @@ export default function DashboardPage() {
             </div>
           </div>
         </div>
+
+        {/* Plan summary */}
+        {pack?.blocks?.length ? (
+          <div className="mt-3">
+            <span
+              className={`rounded-full px-2 py-1 text-xs ${planSummary?.badge ?? "bg-slate-100 text-slate-800"}`}
+              title="Where today's blocks come from"
+            >
+              {planSummary?.label ?? "Plan"}
+            </span>
+          </div>
+        ) : null}
       </section>
 
       {/* Open Day */}
       {showOpenPanel && (
-        <section className="rounded-2xl border p-4">
+        <section id="open-day-section" className="rounded-2xl border p-4">
           <h2 className="mb-2 text-lg font-semibold">Open your day</h2>
           <p className="text-sm text-gray-600">
             You should open within <b>±10 minutes</b> of the start time.
@@ -415,7 +511,7 @@ export default function DashboardPage() {
 
       {/* Active Block */}
       {!!pack?.openedAt && (
-        <section className="rounded-2xl border p-4">
+        <section id="now-section" className="rounded-2xl border p-4">
           <h2 className="mb-3 text-lg font-semibold">Now</h2>
           {(() => {
             const active = activeBlock;
@@ -429,14 +525,13 @@ export default function DashboardPage() {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center gap-3">
                   <DepthPill d={active.depthLevel} />
+                  <SourcePill s={active.source ?? "standing"} />
                   <div>
                     <div className="font-medium">
                       {fromMinutes(active.startMin)}–{fromMinutes(active.endMin)}
                     </div>
                     <div className="text-sm text-gray-600">
-                      {active.goalId
-                        ? goalMap[active.goalId]?.label ?? `Goal #${active.goalId}`
-                        : "No goal"}
+                      {renderTaskOrGoal(active)}
                     </div>
                   </div>
                 </div>
@@ -463,7 +558,7 @@ export default function DashboardPage() {
 
       {/* Schedule preview */}
       {!!pack?.openedAt && (
-        <section className="rounded-2xl border p-4">
+        <section id="blocks-section" className="rounded-2xl border p-4">
           <h2 className="mb-3 text-lg font-semibold">Today’s blocks</h2>
           {pack.blocks.length === 0 ? (
             <div className="text-sm text-gray-600">
@@ -484,14 +579,13 @@ export default function DashboardPage() {
                 >
                   <div className="flex items-center gap-3">
                     <DepthPill d={b.depthLevel} />
+                    <SourcePill s={b.source ?? "standing"} />
                     <div className="text-sm">
                       <div className="font-medium">
                         {fromMinutes(b.startMin)}–{fromMinutes(b.endMin)}
                       </div>
                       <div className="text-gray-500">
-                        {b.goalId
-                          ? goalMap[b.goalId]?.label ?? `Goal #${b.goalId}`
-                          : "No goal"}
+                        {renderTaskOrGoal(b)}
                       </div>
                     </div>
                   </div>
@@ -519,7 +613,7 @@ export default function DashboardPage() {
 
       {/* Shutdown */}
       {showShutdownPanel && (
-        <section className="rounded-2xl border p-4">
+        <section id="shutdown-section" className="rounded-2xl border p-4">
           <h2 className="mb-2 text-lg font-semibold">Shutdown report</h2>
           <p className="text-sm text-gray-600">
             Preferably close within <b>the last 15 minutes</b> of your day window.
@@ -535,10 +629,8 @@ export default function DashboardPage() {
                   <div key={b.id} className="rounded-lg border p-3">
                     <div className="mb-1 text-sm font-medium">
                       {fromMinutes(b.startMin)}–{fromMinutes(b.endMin)} •{" "}
-                      {b.goalId
-                        ? goalMap[b.goalId]?.label ?? `Goal #${b.goalId}`
-                        : "No goal"}{" "}
-                      • <DepthPill d={b.depthLevel} />
+                      {renderTaskOrGoal(b)} • <DepthPill d={b.depthLevel} /> •{" "}
+                      <SourcePill s={b.source ?? "standing"} />
                     </div>
                     <textarea
                       rows={2}
@@ -622,6 +714,13 @@ export default function DashboardPage() {
         onConfirm={() => {
           confirmAction.current?.();
         }}
+      />
+
+      {/* Walkthrough overlay */}
+      <WalkthroughTour
+        open={tourOpen}
+        onClose={() => setTourOpen(false)}
+        steps={tourSteps}
       />
     </div>
   );

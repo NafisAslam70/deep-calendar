@@ -1,4 +1,3 @@
-// lib/schema.ts
 import {
   pgTable,
   serial,
@@ -17,8 +16,7 @@ export const users = pgTable("users", {
   email: text("email").notNull().unique(),
   hash: text("hash").notNull(),
   name: text("name"),
-  // NEW (for public, read-only API token)
-  publicKey: text("public_key").unique(), // nullable until user generates
+  publicKey: text("public_key").unique(),
   publicKeyCreatedAt: timestamp("public_key_created_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
@@ -33,7 +31,6 @@ export const goals = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     label: text("label").notNull(),
     color: text("color").notNull().default("bg-blue-500"),
-    // store 'YYYY-MM-DD' as TEXT (easy migrations)
     deadlineISO: text("deadline_iso"),
     isArchived: boolean("is_archived").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
@@ -52,8 +49,8 @@ export const routineWindows = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     weekday: smallint("weekday").notNull(), // 0..6
-    openMin: integer("open_min").notNull(), // minutes from 00:00
-    closeMin: integer("close_min").notNull(), // minutes from 00:00
+    openMin: integer("open_min").notNull(),
+    closeMin: integer("close_min").notNull(),
   },
   (t) => ({
     uniqUserDay: uniqueIndex("uniq_windows_user_day").on(t.userId, t.weekday),
@@ -69,7 +66,7 @@ export const routines = pgTable(
     userId: integer("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    weekday: smallint("weekday").notNull(), // 0..6
+    weekday: smallint("weekday").notNull(),
     startMin: integer("start_min").notNull(),
     endMin: integer("end_min").notNull(),
     depthLevel: smallint("depth_level").notNull(), // 1|2|3
@@ -81,12 +78,7 @@ export const routines = pgTable(
   },
   (t) => ({
     byUserDay: index("idx_routines_user_weekday").on(t.userId, t.weekday),
-    // optional: helps sort quickly
-    byUserDayTime: index("idx_routines_user_day_time").on(
-      t.userId,
-      t.weekday,
-      t.startMin
-    ),
+    byUserDayTime: index("idx_routines_user_day_time").on(t.userId, t.weekday, t.startMin),
     uniqPerDayOrder: uniqueIndex("uniq_routines_user_weekday_order").on(
       t.userId,
       t.weekday,
@@ -114,7 +106,7 @@ export const days = pgTable(
   })
 );
 
-/* BLOCKS (instantiated from routine for a specific day) */
+/* BLOCKS (standing from routine OR one-off "single-day") */
 export const blocks = pgTable(
   "blocks",
   {
@@ -128,6 +120,10 @@ export const blocks = pgTable(
     goalId: integer("goal_id").references(() => goals.id, { onDelete: "set null" }),
     status: text("status").notNull().default("planned"), // planned|active|done|skipped
     actualSec: integer("actual_sec").notNull().default(0),
+    // NEW: free-text task/label for one-offs (and copy of routine label)
+    label: text("label"),
+    // provenance
+    source: text("source").notNull().default("standing"), // "standing" | "single-day"
   },
   (t) => ({
     byDay: index("idx_blocks_day").on(t.dayId),

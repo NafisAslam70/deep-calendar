@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { goals, routines, routineWindows, days, blocks } from "@/lib/schema";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { verifyToken } from "@/lib/jwt";
 
 type Depth = 1 | 2 | 3;
@@ -10,7 +10,7 @@ type RoutineInsert = typeof routines.$inferInsert;
 
 async function getUid(req: NextRequest) {
   const auth = req.headers.get("authorization") || "";
-  const bearer = auth.match(/^Bearer\s+(.+)$/i)?.[1];
+  const bearer = auth.match(/^Bearer\\s+(.+)$/i)?.[1];
   const cookie = req.cookies.get("dc_token")?.value;
   const token = bearer || cookie;
   if (!token) return null;
@@ -24,6 +24,9 @@ async function getUid(req: NextRequest) {
 
 function overlap(aS: number, aE: number, bS: number, bE: number) {
   return Math.max(aS, bS) < Math.min(aE, bE);
+}
+function dayOfWeekFromISO(dateISO: string) {
+  return new Date(`${dateISO}T00:00:00`).getDay();
 }
 
 function instantiateFromRoutine(
@@ -43,12 +46,14 @@ function instantiateFromRoutine(
       endMin: r.endMin,
       depthLevel: r.depthLevel,
       goalId: r.goalId ?? null,
+      label: r.label ?? null,
       status: "planned" as const,
       actualSec: 0,
+      source: "standing" as const,
     }));
 }
 
-/** shared conflict checker */
+/** shared conflict checker for weekly routine push */
 async function getRoutineConflictsForUser(
   uid: number,
   payloadItems: Array<{ days: number[]; sprints: Array<{ startMin: number; endMin: number }> }>
@@ -147,8 +152,10 @@ export async function GET(req: NextRequest, ctx: Ctx) {
             endMin: b.endMin,
             depthLevel: b.depthLevel,
             goalId: b.goalId,
+            label: b.label ?? null,
             status: b.status,
             actualSec: b.actualSec,
+            source: b.source,
           }))
         );
       }
@@ -166,8 +173,10 @@ export async function GET(req: NextRequest, ctx: Ctx) {
         endMin: b.endMin,
         depthLevel: b.depthLevel as Depth,
         goalId: b.goalId ?? undefined,
+        label: (b as any).label ?? undefined,
         status: b.status as "planned" | "active" | "done" | "skipped",
         actualSec: b.actualSec,
+        source: (b as any).source as "standing" | "single-day",
       })),
     };
     return NextResponse.json({ pack });
@@ -235,19 +244,149 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     return NextResponse.json({ conflicts });
   }
 
+  // NEW: Single-Day Plan conflicts (no goal required)
+  if (slug[0] === "day" && slug[1] === "plan" && slug[2] === "conflicts") {
+    type PlanItem = { startMin: number; endMin: number; depthLevel: number; label?: string | null; goalId?: number | null };
+    const dateISO: string | undefined = body?.dateISO;
+    const items: PlanItem[] = Array.isArray(body?.items) ? body.items : [];
+    if (!dateISO) return NextResponse.json({ error: "dateISO required" }, { status: 400 });
+    if (!items.length) return NextResponse.json({ conflicts: [] });
+
+    const [dayRow] = await db.select().from(days).where(and(eq(days.userId, uid), eq(days.dateISO, dateISO)));
+    let existingRanges: Array<{ startMin: number; endMin: number; label?: string | null }> = [];
+
+    if (dayRow) {
+      const existingBlocks = await db.select().from(blocks).where(eq(blocks.dayId, dayRow.id));
+      existingRanges = existingBlocks.map((b) => ({ startMin: b.startMin, endMin: b.endMin, label: (b as any).label ?? null }));
+    } else {
+      const wd = dayOfWeekFromISO(dateISO);
+      const standing = await db.select().from(routines).where(and(eq(routines.userId, uid), eq(routines.weekday, wd)));
+      existingRanges = standing.map((r) => ({ startMin: r.startMin, endMin: r.endMin, label: r.label ?? null }));
+    }
+
+    const conflicts: Array<{ startMin: number; endMin: number; withLabel?: string | null }> = [];
+    for (const it of items) {
+      for (const ex of existingRanges) {
+        if (overlap(it.startMin, it.endMin, ex.startMin, ex.endMin)) {
+          conflicts.push({
+            startMin: Math.max(it.startMin, ex.startMin),
+            endMin: Math.min(it.endMin, ex.endMin),
+            withLabel: ex.label ?? null,
+          });
+        }
+      }
+    }
+    return NextResponse.json({ conflicts });
+  }
+
+  // NEW: push Single-Day Plan (no goal required)
+  if (slug[0] === "day" && slug[1] === "plan") {
+    type PlanItem = { startMin: number; endMin: number; depthLevel: number; label?: string | null; goalId?: number | null };
+    const dateISO: string | undefined = body?.dateISO;
+    const items: PlanItem[] = Array.isArray(body?.items) ? body.items : [];
+    const strategy: "replace" | "merge" = body?.strategy === "merge" ? "merge" : "replace";
+    const overwrite: boolean = url.searchParams.get("overwrite") === "1";
+
+    if (!dateISO) return NextResponse.json({ error: "dateISO required" }, { status: 400 });
+    if (!items.length) return NextResponse.json({ ok: true, inserted: 0 });
+
+    let [dayRow] = await db.select().from(days).where(and(eq(days.userId, uid), eq(days.dateISO, dateISO)));
+    if (!dayRow) {
+      const [created] = await db.insert(days).values({ userId: uid, dateISO }).returning();
+      dayRow = created;
+    }
+
+    const existing = await db.select().from(blocks).where(eq(blocks.dayId, dayRow.id));
+
+    // on merge with empty day -> bootstrap standing
+    if (strategy === "merge" && existing.length === 0) {
+      const wd = dayOfWeekFromISO(dateISO);
+      const standing = await db.select().from(routines).where(and(eq(routines.userId, uid), eq(routines.weekday, wd)));
+      if (standing.length) {
+        const base = standing
+          .slice()
+          .sort((a, b) => a.startMin - b.startMin)
+          .map((r) => ({
+            dayId: dayRow.id,
+            startMin: r.startMin,
+            endMin: r.endMin,
+            depthLevel: r.depthLevel as Depth,
+            goalId: r.goalId,
+            label: r.label ?? null,
+            status: "planned" as const,
+            actualSec: 0,
+            source: "standing" as const,
+          }));
+        await db.insert(blocks).values(base);
+      }
+    }
+
+    // refresh current day blocks
+    const current = await db.select().from(blocks).where(eq(blocks.dayId, dayRow.id));
+
+    // conflicts
+    const overlapsFound: Array<{ startMin: number; endMin: number }> = [];
+    for (const it of items) {
+      for (const ex of current) {
+        if (overlap(it.startMin, it.endMin, ex.startMin, ex.endMin)) {
+          overlapsFound.push({
+            startMin: Math.max(it.startMin, ex.startMin),
+            endMin: Math.min(it.endMin, ex.endMin),
+          });
+        }
+      }
+    }
+    if (overlapsFound.length && !overwrite) {
+      return NextResponse.json({ error: "conflicts", conflicts: overlapsFound }, { status: 409 });
+    }
+
+    if (strategy === "replace") {
+      await db.delete(blocks).where(eq(blocks.dayId, dayRow.id));
+    } else if (overlapsFound.length && overwrite) {
+      // delete only overlapping existing blocks
+      for (const it of items) {
+        await db.execute(sql`
+          DELETE FROM "blocks"
+          WHERE "day_id" = ${dayRow.id}
+          AND GREATEST(${it.startMin}, "start_min") < LEAST(${it.endMin}, "end_min")
+        `);
+      }
+    }
+
+    // insert one-off (no goal required)
+    const values = items
+      .slice()
+      .sort((a, b) => a.startMin - b.startMin)
+      .map((it) => ({
+        dayId: dayRow.id,
+        startMin: Number(it.startMin),
+        endMin: Number(it.endMin),
+        depthLevel: (Number(it.depthLevel) as Depth) || 3,
+        goalId: typeof it.goalId === "number" ? it.goalId : null,
+        label: typeof it.label === "string" && it.label.trim() ? it.label.trim() : null,
+        status: "planned" as const,
+        actualSec: 0,
+        source: "single-day" as const,
+      }));
+
+    if (values.length) await db.insert(blocks).values(values);
+
+    return NextResponse.json({ ok: true, inserted: values.length });
+  }
+
+  // ---------- weekly routine push (unchanged; goal required) ----------
   if (slug[0] === "routine" && slug[1] === "push") {
     const overwrite = url.searchParams.get("overwrite") === "1";
     type PushItem = {
       label?: string;
       depthLevel: Depth | number;
-      goalId: number; // REQUIRED to satisfy schema
+      goalId: number; // REQUIRED for weekly
       days: number[];
       sprints: Array<{ startMin: number; endMin: number }>;
     };
     const items: PushItem[] = Array.isArray(body?.items) ? body.items : [];
     if (items.length === 0) return NextResponse.json({ ok: true, inserted: 0 });
 
-    // validate goalIds exist on all items
     if (items.some((it) => typeof it.goalId !== "number")) {
       return NextResponse.json({ error: "goalId required for all items" }, { status: 400 });
     }
@@ -260,7 +399,6 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       if (conflicts.length) return NextResponse.json({ error: "conflicts", conflicts }, { status: 409 });
     }
 
-    // Overwrite: delete overlaps first
     if (overwrite) {
       const daySet = new Set<number>();
       for (const it of items) for (const d of it.days || []) if (d >= 0 && d <= 6) daySet.add(d);
@@ -284,7 +422,6 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       }
     }
 
-    // Insert
     let count = 0;
     for (const it of items) {
       const label = typeof it.label === "string" && it.label.trim() ? it.label.trim() : null;
@@ -299,7 +436,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
           startMin: s.startMin,
           endMin: s.endMin,
           depthLevel: depth,
-          goalId: it.goalId, // REQUIRED
+          goalId: it.goalId,
           ...(label ? { label } : {}),
           orderIndex: i,
         }));
@@ -313,7 +450,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     return NextResponse.json({ ok: true, inserted: count });
   }
 
-  // legacy single-day routine upsert
+  // ---------- legacy single-weekday upsert (unchanged) ----------
   if (slug[0] === "routine") {
     const { weekday, items, applyTo, window } = body || {};
 
@@ -341,13 +478,12 @@ export async function POST(req: NextRequest, ctx: Ctx) {
             startMin: number;
             endMin: number;
             depthLevel: number;
-            goalId: number | null | undefined; // allow incoming null/undefined but require number before insert
+            goalId: number | null | undefined;
             label?: string | null;
             orderIndex?: number;
           };
           const arr = items as RoutineItemInput[];
 
-          // ensure all items have goalId
           if (arr.some((x) => typeof x.goalId !== "number")) {
             return NextResponse.json({ error: "goalId required for each routine item" }, { status: 400 });
           }
@@ -358,7 +494,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
             startMin: Number(x.startMin),
             endMin: Number(x.endMin),
             depthLevel: Number(x.depthLevel) as Depth,
-            goalId: x.goalId as number, // REQUIRED
+            goalId: x.goalId as number,
             ...(typeof x.label === "string" && x.label.trim() ? { label: x.label.trim() } : {}),
             orderIndex: Number.isFinite(x.orderIndex as number) ? (x.orderIndex as number) : i,
           }));
@@ -406,7 +542,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
         startMin: Number(x.startMin),
         endMin: Number(x.endMin),
         depthLevel: Number(x.depthLevel) as Depth,
-        goalId: x.goalId as number, // REQUIRED
+        goalId: x.goalId as number,
         ...(typeof x.label === "string" && x.label.trim() ? { label: x.label.trim() } : {}),
         orderIndex: Number.isFinite(x.orderIndex as number) ? (x.orderIndex as number) : i,
       }));
@@ -449,6 +585,7 @@ export async function PATCH(req: NextRequest) {
           : Number.isInteger(body.goalId)
           ? { goalId: body.goalId }
           : {}),
+        ...(typeof body.label === "string" ? { label: body.label } : {}),
         ...(Number.isInteger(body.cognition)
           ? { depthLevel: body.cognition }
           : Number.isInteger(body.depthLevel)

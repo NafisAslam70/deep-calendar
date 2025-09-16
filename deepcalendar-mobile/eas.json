@@ -1,8 +1,25 @@
 {
-  "cli": { "version": ">= 13.0.0" },
+  "cli": {
+    "version": ">= 13.0.0",
+    "appVersionSource": "remote"
+  },
   "build": {
     "preview": {
-      "android": { "buildType": "apk" }
+      "channel": "preview",
+      "android": { "buildType": "apk" },
+      "ios": { "simulator": true },
+      "env": {
+        "EXPO_PUBLIC_API_BASE": "https://deep-calendar.vercel.app"
+      }
+    },
+    "production": {
+      "channel": "production",
+      "android": { "buildType": "app-bundle" },
+      "ios": {},
+      "env": {
+        "EXPO_PUBLIC_API_BASE": "https://deep-calendar.vercel.app"
+      }
     }
-  }
+  },
+  "submit": { "production": {} }
 }

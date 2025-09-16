@@ -1,0 +1,218 @@
+DeepCalendar — Web & Mobile Documentation
+
+Summary
+- Purpose: Plan deep work with weekly routines, open/close days, and track blocks. Web app (Next.js) + Mobile app (Expo/React Native) backed by the same API and Postgres database.
+- Highlights: Goals, routine windows, standing deep blocks, single-day plans, day open/close with status and notes, public read-only API for summaries/embeds, Expo Router mobile build flow (EAS).
+
+Monorepo Structure
+- Web (Next.js): app/, lib/, app/api/, middleware.ts, lib/schema.ts, lib/db.ts, etc.
+- Mobile (Expo): deepcalendar-mobile/ with expo-router file-based navigation.
+- Shared concepts: Goals, Routine windows, Routines (standing blocks), Days, Blocks (standing or single-day), Depth levels (L1/L2/L3), public API token.
+
+Tech Stack
+- Web: Next.js App Router, TypeScript, Tailwind CSS v4 (via @tailwindcss/postcss), Drizzle ORM with Postgres (pg), jose for JWT, bcryptjs, date-fns, framer-motion optionally.
+- DB: Postgres (DATABASE_URL). Drizzle schema in lib/schema.ts.
+- Mobile: Expo SDK 51, React Native 0.74, expo-router v3, AsyncStorage, expo-secure-store optional, expo-linear-gradient, expo-updates; builds via EAS.
+
+Environment Variables
+- Web:
+  - DATABASE_URL: Postgres connection string (required). lib/db.ts.
+  - NEXTAUTH_SECRET: JWT HMAC secret used by jose (lib/jwt.ts); env fallback to "dev-secret" in dev.
+  - NEXT_PUBLIC_BASE_URL: Optional; default base in lib/baseUrl.ts falls back to deployed URL.
+  - CORS_TRUSTED_ORIGINS (commented middleware versions) for refined CORS; current middleware allows "*" for API.
+- Mobile:
+  - EXPO_PUBLIC_API_BASE: Public base URL for API (in .env and eas.json build profiles). Used by deepcalendar-mobile/lib/auth.js and lib/config.js.
+
+Database Schema (lib/schema.ts)
+- users: id, email (unique), hash, name, publicKey (unique), publicKeyCreatedAt, createdAt.
+- goals: id, userId, label, color (e.g., hex), deadlineISO (nullable), isArchived, createdAt. Index by user.
+- routine_windows: id, userId, weekday (0..6), openMin, closeMin. Unique by (userId, weekday).
+- routines: id, userId, weekday, startMin, endMin, depthLevel (1|2|3), goalId (FK), optional label, orderIndex; indexes for user+weekday and ordering.
+- days: id, userId, dateISO ('YYYY-MM-DD'), openedAt, shutdownAt, journal; unique by (userId, dateISO).
+- blocks: id, dayId, startMin, endMin, depthLevel (1|2|3), goalId nullable, status ('planned'|'active'|'done'|'skipped'), actualSec, label optional, source ('standing'|'single-day').
+
+Auth & Sessions
+- Custom JWT with jose; token set as httpOnly cookie 'dc_token' on web sign-in/sign-up. Mobile passes Bearer token in Authorization header.
+- app/api/auth:
+  - POST /api/auth/signup: { email, password, name? } → sets cookie, returns token & user.
+  - POST /api/auth/signin: { email, password } → sets cookie, returns token & user.
+  - GET  /api/auth/me: reads cookie or Authorization Bearer to return user.
+  - POST /api/auth/signout: clears cookie (web). Mobile clears AsyncStorage.
+
+Core Concepts (lib/core/deepcalendar.ts)
+- instantiateDayFromRoutine: Convert standing routine items into a DayPack with planned blocks.
+- startBlock/stopActive/updateBlock/shutdown: Pure helpers to manage statuses and capture journal, used by web logic (server re-implements in API for DB rows).
+- summarize: Aggregate by goal and by depth. Public endpoints compute stats over time ranges on the server side.
+
+Web App — Pages (app/(public)/)
+- layout.tsx: Global nav + auth state check, sign-in/out buttons, tabs (Dashboard, Deep Calendar, Routine, Goals), and Footer.
+- / (page.tsx): Dashboard
+  - Shows today’s routine window, active block, open day action with grace gate, schedule preview, and shutdown workflow (block notes + journal posting).
+  - Reads: /api/deepcal/goals, /api/deepcal/routine?weekday=Today, /api/deepcal/day?date=YYYY-MM-DD.
+  - Writes: /api/deepcal/day?date=...&autocreate=true (open), PATCH /api/deepcal/blocks?id=..., POST /api/deepcal/day/shutdown.
+- /deep-calendar (page.tsx): Visual calendar
+  - Weekly grid (desktop) + single-day mobile timeline with now-line and grouped windows. If Single-Day Plan exists for today, it overrides standing view.
+  - Reads: /api/deepcal/routine?weekday=0..6; /api/deepcal/day?date=YYYY-MM-DD.
+- /routine (page.tsx): Routine builder (standing + single-day)
+  - Composer for block with breaks → auto sprints; day windows editor; push per-day blocks; single-day plan push flows with conflict strategies:
+    - Merge (no-overwrite): 409 on conflict → prompt to choose.
+    - Merge & Overwrite: delete overlapping parts, insert new items.
+    - Replace day: wipe today’s blocks then insert.
+  - Reads: /api/deepcal/goals, /api/deepcal/routine?weekday=0..6, /api/deepcal/day?date=.
+  - Writes: POST /api/deepcal/routine (applyTo/days, items, window), POST /api/deepcal/day/plan(+conflicts).
+- /goals (page.tsx): Manage goals (create/archive via DELETE on API).
+- /account (page.tsx): Profile and public API token management (generate/rotate/disable). Also shows example public endpoints.
+- /auth/signin, /auth/signup, /auth/signout: Simple forms and redirects.
+- Components: WalkthroughTour (guided overlay), TopTabs (responsive nav), Footer.
+
+Web App — API (app/api/)
+- Private (require jwt via cookie 'dc_token' or Authorization Bearer):
+  - GET /api/deepcal/goals → { goals }
+  - POST /api/deepcal/goals → create goal
+  - DELETE /api/deepcal/goals?id=ID → archive goal
+
+  - GET /api/deepcal/routine?weekday=0..6 → { window, items }
+  - POST /api/deepcal/routine
+    - Global mode: { applyTo: number[], window?, items?[] } writes selected days.
+    - Single weekday mode: ?weekday=0..6 + body { window?, items?[] } writes one day.
+    - Conflicts helper: POST /api/deepcal/routine/conflicts → returns overlapping ranges vs existing standing.
+    - Finalize status cookie: GET/POST /api/deepcal/routine/status|finalize (UI helper).
+
+  - GET /api/deepcal/day?date=YYYY-MM-DD[&autocreate=true] → { pack|null }
+  - POST /api/deepcal/day/plan → push Single-Day Plan
+    - Body: { dateISO, items:[{startMin,endMin,depthLevel,label?}] , strategy: 'replace'|'merge' }
+    - On merge, optionally bootstrap standing if empty.
+    - 409 if conflicts and overwrite not set; POST /api/deepcal/day/plan/conflicts for preview.
+    - Overwrite behavior with ?overwrite=1: delete overlapping existing blocks only.
+  - PATCH /api/deepcal/blocks?id=ID → update status/goalId/label/depthLevel/actualSec
+  - POST /api/deepcal/day/shutdown → set shutdownAt and journal text (stores JSON summary string).
+
+- Auth (custom):
+  - POST /api/auth/signup → sets cookie; returns { token, user }.
+  - POST /api/auth/signin → sets cookie; returns { token, user }.
+  - GET /api/auth/me → returns user (via cookie or Bearer).
+  - POST /api/auth/signout → clears cookie.
+
+- Public (read-only; token in URL path):
+  - POST/GET/DELETE /api/public/token → generate/rotate/disable a user’s publicKey (requires auth cookie/Bearer).
+  - GET /api/public/[token]/summary?range=30d|7d|all or &from=YYYY-MM-DD&to=YYYY-MM-DD → goals, routine summary, stats, activeNow.
+  - GET /api/public/[token]/routine[?weekday=0..6] → windows/items (all or per-day).
+  - GET /api/public/[token]/goals → active goals.
+  - GET /api/public/[token]/stats?range=... → timespent by goal.
+
+CORS Middleware (middleware.ts)
+- Current active behavior: For any /api/* request, sets headers to allow "*" (Access-Control-Allow-Origin: *), supports credentials-free public reads; handles OPTIONS preflight.
+- Commented variants show how to lock down private endpoints to trusted origins while keeping public endpoints open. Consider tightening in production.
+
+Web Config & Scripts
+- package.json scripts: dev, build, start, lint, dbpush (drizzle-kit push), dbstudio.
+- PostCSS via @tailwindcss/postcss; app/globals.css uses Tailwind CSS directives; tailwind.config.ts present but empty (Tailwind v4 can work with @import and @theme inline).
+- next.config.ts: default.
+
+Mobile App — Navigation & Screens (deepcalendar-mobile/)
+- App entry: App.js (expo-router/entry). Global error handler logs "DC_FATAL".
+- expo-router layout: app/_layout.js wraps children with AuthProvider (lib/auth.js).
+- Groups:
+  - /landing: Marketing-style entry for unauthenticated users.
+  - /(auth): /signin, /signup forms.
+  - /(tabs): Tabbed app for authenticated users:
+    - /dashboard: Today open/close, active block, logging notes + journal; mirrored web dashboard flows.
+    - /calendar: Single-day timeline with window bands, now-line, active block highlighting; "Routine builder" button navigates to /(tabs)/routine.
+    - /routine: Routine builder (simplified mobile version): day windows + compose block sprints with breaks; push per-day with overwrite prompt.
+    - /goals: Create/list/edit/delete goals with color palette and optional deadlines.
+    - /account: Profile info, open web Account in browser (to manage public token), copy URL; sign out.
+    - /viewer: placeholder for future public embed viewer.
+
+Mobile App — Auth & API
+- lib/auth.js: AuthProvider with AsyncStorage keys (dc_token, dc_base). fetchJson adds Authorization: Bearer if token present and prefixes EXPO_PUBLIC_API_BASE.
+- lib/api.js: Thin wrappers api.get/post/patch/del using fetchJson and raising errors on non-ok.
+- lib/config.js: DEFAULT_API_BASE from EXPO_PUBLIC_API_BASE.
+- lib/dc.js: Shared helpers WEEKDAYS, toMinutes/fromMinutes, overlaps, ymd.
+
+Mobile App — Config
+- app.json: app metadata, scheme, Android package, iOS bundle identifiers, runtimeVersion policy sdkVersion, updates URL and EAS projectId.
+- eas.json:
+  - build.preview: channel 'preview', android buildType apk (for easy APK), ios simulator.
+  - build.production: channel 'production', android app-bundle; both set EXPO_PUBLIC_API_BASE.
+- package.json scripts: expo start / android / ios / web / prebuild.
+- .env: EXPO_PUBLIC_API_BASE=https://deep-calendar.vercel.app (overridden by EAS env as needed).
+
+End-to-End Flow
+- Sign up/in: Web sets cookie; Mobile stores token and passes Bearer headers.
+- Routine setup: Create goals; set day windows (openMin/closeMin per weekday); compose blocks + breaks to generate sprints; push standing items to selected weekdays.
+- Day open: Creates day row (and instantiates blocks from standing routine if any). The mobile/web dashboards show active block based on local time vs block ranges.
+- Single-Day Plan: For a specific date, push adhoc items (optional labels, depth) with strategies (merge/replace, with or without overwrite). Today’s calendar view indicates "Single-Day Plan" and overrides standing for that day’s visual.
+- Update block status: PATCH endpoint marks planned/active/done/skipped; pack updated optimistically on mobile.
+- Shutdown: Save a JSON journal (client summary + optional notes per block) to days.journal; set shutdownAt.
+
+Security & Notes
+- CORS: Currently wide open (*) on API; consider restricting private endpoints in production.
+- JWT secret: NEXTAUTH_SECRET must be set in production; do not commit real secrets.
+- Database URL: Keep DATABASE_URL secret; use Neon/Supabase/Render-managed Postgres with SSL.
+- Public API token: Per-user publicKey enables read-only endpoints. Rotating invalidates previous key immediately.
+
+How to Run (Web)
+- Install: npm install
+- Set env: .env.local → DATABASE_URL, NEXTAUTH_SECRET
+- Dev: npm run dev → http://localhost:3000
+- DB: npm run dbpush (drizzle-kit push), npm run dbstudio to inspect.
+- Deploy: Vercel recommended. Ensure env vars set.
+
+How to Run (Mobile)
+- cd deepcalendar-mobile
+- Install: npm install
+- Set EXPO_PUBLIC_API_BASE to your web deployment (or local tunnel) in .env or EAS profile.
+- Start dev: npm run start (Expo Go / simulator)
+- Build Android APK (EAS):
+  - eas build -p android --profile preview (produces an installable APK)
+  - preview profile injects EXPO_PUBLIC_API_BASE from eas.json
+- Build production bundles: eas build -p android --profile production; eas build -p ios --profile production
+
+File Inventory (Key Paths)
+- Web
+  - package.json: scripts/deps
+  - lib/db.ts: drizzle + pg pool setup
+  - lib/schema.ts: tables (users, goals, routine_windows, routines, days, blocks)
+  - lib/jwt.ts: sign/verify JWT (HS256)
+  - lib/baseUrl.ts: runtime/public base URL for web account links
+  - app/(public)/*: Dashboard, Deep Calendar, Routine Builder, Goals, Account
+  - app/api/auth/*: signup, signin, signout, me
+  - app/api/deepcal/[...slug]/route.ts: all private deepcal endpoints (goals, routine, day, blocks)
+  - app/api/public/*: token management and public read-only endpoints (summary, routine, goals, stats)
+  - middleware.ts: CORS headers for /api/*
+  - app/globals.css: Tailwind setup
+- Mobile
+  - App.js: expo-router/entry, error handler
+  - app/_layout.js and (auth)/(tabs)/* screens
+  - lib/auth.js: Auth context + fetchJson + storage
+  - lib/api.js: API wrapper
+  - lib/config.js: API base
+  - lib/dc.js: shared helpers
+  - app.json, eas.json, package.json: app/build configuration
+
+Mapping Web ↔ Mobile
+- Both consume the same private API for authenticated data.
+- Mobile reproduces the dashboard (open/close day), calendar single-day timeline, routine builder (simpler), and goals CRUD.
+- Account management for public tokens is handled in web; mobile links out to the web account page.
+
+Porting Notes — Reusing This Pattern for Another App
+- Keep backend as the single source of truth (Next.js API routes or separate service) → design endpoints first.
+- Mirror core flows in mobile with expo-router screens; start with AuthProvider and a tabs layout; reuse API shapes and types.
+- Use EAS preview profile to generate an APK quickly and share; keep EXPO_PUBLIC_API_BASE pointed at your web deployment.
+- Gradually add platform niceties (toasts, confirm modals, accessibility labels) once flows are correct.
+
+Appendix — Useful Paths
+- Web scripts: package.json:1
+- DB schema: lib/schema.ts:1
+- Private API router: app/api/deepcal/[...slug]/route.ts:1
+- Public token routes: app/api/public/token/route.ts:1
+- Public summary: app/api/public/[token]/summary/route.ts:1
+- Web dashboard: app/(public)/page.tsx:1
+- Web calendar: app/(public)/deep-calendar/page.tsx:1
+- Web routine: app/(public)/routine/page.tsx:1
+- Mobile dashboard: deepcalendar-mobile/app/(tabs)/dashboard.js:1
+- Mobile calendar: deepcalendar-mobile/app/(tabs)/calendar.js:1
+- Mobile routine: deepcalendar-mobile/app/(tabs)/routine.js:1
+- Mobile goals: deepcalendar-mobile/app/(tabs)/goals.js:1
+- Mobile account: deepcalendar-mobile/app/(tabs)/account.js:1
+

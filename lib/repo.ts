@@ -10,10 +10,16 @@ export async function listGoals() {
   return db.select().from(goals).where(and(eq(goals.userId, USER_ID), eq(goals.isArchived, false)));
 }
 export async function createGoal(input: { label: string; color: string; deadlineISO?: string }) {
-  const [g] = await db.insert(goals).values({
-    userId: USER_ID, label: input.label, color: input.color, deadlineISO: input.deadlineISO ?? null
-  }).returning();
-  return g;
+  const inserted = await db
+    .insert(goals)
+    .values({
+      userId: USER_ID,
+      label: input.label,
+      color: input.color,
+      deadlineISO: input.deadlineISO ?? null,
+    })
+    .returning();
+  return Array.isArray(inserted) ? inserted[0] : (inserted as { rows?: Array<(typeof goals.$inferSelect)> })?.rows?.[0];
 }
 export async function deleteGoal(id: number) {
   // soft delete (archive)

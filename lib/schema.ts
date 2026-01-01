@@ -8,6 +8,7 @@ import {
   smallint,
   index,
   uniqueIndex,
+  foreignKey,
 } from "drizzle-orm/pg-core";
 
 /* USERS — add publicKey + publicKeyCreatedAt for public API */
@@ -37,7 +38,7 @@ export const goals = pgTable(
     userId: integer("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    parentGoalId: integer("parent_goal_id").references(() => goals.id, { onDelete: "set null" }),
+    parentGoalId: integer("parent_goal_id"),
     label: text("label").notNull(),
     color: text("color").notNull().default("bg-blue-500"),
     deadlineISO: text("deadline_iso"),
@@ -47,6 +48,10 @@ export const goals = pgTable(
   (t) => ({
     byUser: index("idx_goals_user").on(t.userId),
     byParent: index("idx_goals_parent").on(t.parentGoalId),
+    parentFk: foreignKey({
+      columns: [t.parentGoalId],
+      foreignColumns: [t.id],
+    }),
   })
 );
 

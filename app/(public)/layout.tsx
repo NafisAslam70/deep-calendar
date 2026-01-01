@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
+import { Moon, Sun } from "lucide-react";
 import Footer from "./_components/Footer";
 
 /* tiny helper */
@@ -45,6 +46,27 @@ export default function PublicLayout({ children }: { children: React.ReactNode }
   const [userName, setUserName] = useState<string | null>(null);
   const triedRef = useRef(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [theme, setTheme] = useState<"day" | "night">("day");
+
+  useEffect(() => {
+    const stored = (typeof window !== "undefined" && localStorage.getItem("dc_theme")) as "day" | "night" | null;
+    if (stored === "day" || stored === "night") {
+      setTheme(stored);
+      document.documentElement.dataset.theme = stored;
+      return;
+    }
+    const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    const initial = prefersDark ? "night" : "day";
+    setTheme(initial);
+    document.documentElement.dataset.theme = initial;
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    if (typeof window !== "undefined") {
+      localStorage.setItem("dc_theme", theme);
+    }
+  }, [theme]);
 
   useEffect(() => {
     (async () => {
@@ -75,8 +97,11 @@ export default function PublicLayout({ children }: { children: React.ReactNode }
   }
 
   return (
-    <section className="min-h-screen flex flex-col">
-      <nav className="sticky top-0 z-10 border-b bg-white/70 backdrop-blur supports-[backdrop-filter]:bg-white/50">
+    <section
+      data-theme={theme}
+      className="min-h-screen flex flex-col bg-[var(--background)] text-[var(--foreground)] transition-colors duration-300"
+    >
+      <nav className="sticky top-0 z-10 border-b surface-blur text-[var(--foreground)]">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
           <Link href="/" className="font-semibold">DeepCalendar</Link>
 
@@ -93,6 +118,14 @@ export default function PublicLayout({ children }: { children: React.ReactNode }
 
           {/* auth */}
           <div className="ml-2 flex items-center gap-2">
+            <button
+              className="flex h-10 w-10 items-center justify-center rounded-xl border bg-[var(--card)] text-[var(--foreground)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
+              onClick={() => setTheme((t) => (t === "day" ? "night" : "day"))}
+              title="Toggle day/night mode"
+              aria-label="Toggle theme"
+            >
+              {theme === "day" ? <Moon size={18} /> : <Sun size={18} />}
+            </button>
             {isAuthed === null ? (
               <span className="text-sm text-gray-500">…</span>
             ) : isAuthed ? (
@@ -111,7 +144,9 @@ export default function PublicLayout({ children }: { children: React.ReactNode }
         </div>
       </nav>
 
-      <main className="mx-auto max-w-6xl w-full flex-1 px-4 py-6">{children}</main>
+      <main className="mx-auto max-w-6xl w-full flex-1 px-4 py-6">
+        <div className="space-y-6">{children}</div>
+      </main>
 
       <Footer />
 

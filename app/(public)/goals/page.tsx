@@ -55,7 +55,12 @@ export default function GoalsPage() {
   const [gLabel, setGLabel] = useState("");
   const [gColor, setGColor] = useState<Color>(COLORS[0]);
   const [gDeadline, setGDeadline] = useState("");
-  const [gParentId, setGParentId] = useState<number | null>(null);
+  const [sgLabel, setSgLabel] = useState("");
+  const [sgColor, setSgColor] = useState<Color>(COLORS[1]);
+  const [sgDeadline, setSgDeadline] = useState("");
+  const [sgParentId, setSgParentId] = useState<number | null>(null);
+  const [createMode, setCreateMode] = useState<"goal" | "sub-goal">("goal");
+  const [createOpen, setCreateOpen] = useState(true);
 
   const [editingGoalId, setEditingGoalId] = useState<number | null>(null);
   const [editLabel, setEditLabel] = useState("");
@@ -101,30 +106,99 @@ export default function GoalsPage() {
     }
     return m;
   }, [goals]);
-  const topLevelLimitReached = topLevelGoals.length >= 3;
   const roots = topLevelGoals.length ? topLevelGoals : goals;
   const goalById = useMemo<Record<number, Goal>>(
     () => Object.fromEntries(goals.map((g) => [g.id, g])) as Record<number, Goal>,
     [goals]
   );
+  const totalSubGoals = Math.max(0, goals.length - topLevelGoals.length);
+  const [draggingId, setDraggingId] = useState<number | null>(null);
+  const [priority, setPriority] = useState<Record<number, number>>({});
+  const [collapsed, setCollapsed] = useState<Record<number, boolean>>({});
+
+  // hydrate and align priority / collapsed state with localStorage + current goals
+  useEffect(() => {
+    const storedRaw =
+      typeof window !== "undefined" ? window.localStorage.getItem("dc_goal_priority") : null;
+    let stored: Record<number, number> = {};
+    if (storedRaw) {
+      try {
+        stored = JSON.parse(storedRaw) as Record<number, number>;
+      } catch {
+        stored = {};
+      }
+    }
+
+    setPriority((prev) => {
+      const next: Record<number, number> = {};
+      for (const g of goals) {
+        if (stored[g.id] != null) next[g.id] = stored[g.id];
+        else if (prev[g.id] != null) next[g.id] = prev[g.id];
+        else next[g.id] = 0;
+      }
+      return next;
+    });
+    setCollapsed((prev) => {
+      const next: Record<number, boolean> = {};
+      for (const g of goals) {
+        next[g.id] = prev[g.id] ?? false;
+      }
+      return next;
+    });
+  }, [goals]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const payload: Record<number, number> = {};
+    for (const g of goals) {
+      if (priority[g.id] != null) payload[g.id] = priority[g.id];
+    }
+    window.localStorage.setItem("dc_goal_priority", JSON.stringify(payload));
+  }, [priority, goals]);
+
+  const moveGoal = (goalId: number, bucket: number) => {
+    setPriority((prev) => ({ ...prev, [goalId]: bucket }));
+  };
 
   async function createGoal() {
     if (!gLabel.trim()) return;
-    const isTopLevel = gParentId == null;
-    if (topLevelLimitReached && isTopLevel) {
-      askConfirm({ title: "Goal limit", body: "Top-level goals are limited to 3. Add sub-goals under an existing goal.", onConfirm: () => setConfirmOpen(false) });
-      return;
-    }
-    const { ok } = await apiJson("/api/deepcal/goals", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        label: gLabel.trim(),
-        color: gColor,
-        deadlineISO: gDeadline || undefined,
-        parentGoalId: gParentId ?? null,
-      }),
+    await createGoalSubmit({
+      label: gLabel.trim(),
+      color: gColor,
+      deadlineISO: gDeadline || undefined,
+      parentGoalId: null,
     });
-    if (ok) { setGLabel(""); setGDeadline(""); await loadGoals(); }
+    setGLabel("");
+    setGDeadline("");
+  }
+
+  async function createSubGoal() {
+    if (!sgLabel.trim() || !sgParentId) return;
+    const parentBucket = priority[sgParentId] ?? 0;
+    await createGoalSubmit({
+      label: sgLabel.trim(),
+      color: sgColor,
+      deadlineISO: sgDeadline || undefined,
+      parentGoalId: sgParentId,
+    }, parentBucket);
+    setSgLabel("");
+    setSgDeadline("");
+    setSgParentId(null);
+  }
+
+  async function createGoalSubmit(payload: { label: string; color: Color; deadlineISO?: string; parentGoalId: number | null; }, bucketOverride?: number) {
+    const { ok, json } = await apiJson<{ goal: Goal }>("/api/deepcal/goals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (ok) {
+      const newGoal = (json as { goal?: Goal })?.goal;
+      if (newGoal) {
+        setPriority((prev) => ({ ...prev, [newGoal.id]: bucketOverride ?? prev[newGoal.id] ?? 0 }));
+      }
+      await loadGoals();
+    }
   }
 
   function beginEdit(g: Goal) {
@@ -175,7 +249,7 @@ export default function GoalsPage() {
     });
   }
 
-  function renderGoalRow(goal: Goal, opts?: { isChild?: boolean }) {
+  function renderGoalRow(goal: Goal, opts?: { isChild?: boolean; orderIndex?: number }) {
     const isEditing = editingGoalId === goal.id;
     const parentName =
       goal.parentGoalId != null
@@ -189,8 +263,17 @@ export default function GoalsPage() {
           <div className="flex items-center gap-3">
             <span className={`inline-block h-3 w-3 rounded-full ${goal.color || "bg-gray-400"}`} />
             <div>
-              <div className="font-medium">{goal.label}</div>
-              {parentName && <div className="text-xs text-gray-500">Sub-goal of {parentName}</div>}
+              <div className="font-medium">
+                {goal.label}
+              </div>
+              {parentName && (
+                <div className="text-xs text-gray-500 flex items-center gap-1">
+                  <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+                    Sub-goal
+                  </span>
+                  <span className="text-gray-500">of {parentName}</span>
+                </div>
+              )}
               {goal.deadlineISO && <div className="text-xs text-gray-500">Due: {goal.deadlineISO}</div>}
             </div>
           </div>
@@ -242,90 +325,233 @@ export default function GoalsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl p-5">
-      <div className="mb-4 flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Goals</h1>
-          <p className="text-sm text-gray-600">Pick up to three top-level goals, then add sub-goals underneath.</p>
+    <div className="mx-auto max-w-6xl p-5 space-y-6">
+      <div className="relative overflow-hidden rounded-3xl border border-gray-200/80 bg-gradient-to-r from-sky-500/10 via-fuchsia-500/10 to-amber-500/10 p-6 shadow-lg">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Deep work focus</p>
+            <h1 className="text-3xl font-bold text-gray-900">Goals & Priorities</h1>
+            <p className="text-sm text-gray-600">Keep priorities lean, park extras in Least Priority, and nest sub-goals for clarity.</p>
+          </div>
+          <a className="rounded-full border px-4 py-2 text-sm font-semibold bg-white/70 shadow hover:shadow-md transition" href="/routine">Open Routine</a>
         </div>
-        <a className="rounded-lg border px-3 py-1.5 text-sm" href="/routine">Build Routine</a>
+        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          <div className="rounded-2xl border bg-white/70 p-3 shadow-sm">
+            <div className="text-xs text-gray-500">Top-level goals</div>
+            <div className="text-2xl font-semibold text-gray-900">{topLevelGoals.length}</div>
+          </div>
+          <div className="rounded-2xl border bg-white/70 p-3 shadow-sm">
+            <div className="text-xs text-gray-500">Sub-goals</div>
+            <div className="text-2xl font-semibold text-gray-900">{totalSubGoals}</div>
+          </div>
+          <div className="rounded-2xl border bg-white/70 p-3 shadow-sm">
+            <div className="text-xs text-gray-500">Total</div>
+            <div className="text-2xl font-semibold text-gray-900">{goals.length}</div>
+          </div>
+        </div>
       </div>
 
       {/* Create */}
-      <section className="rounded-2xl border p-4">
-        <h2 className="mb-3 text-lg font-semibold">Add a goal or sub-goal</h2>
-        <div className="grid gap-3 sm:grid-cols-3">
-          <label className="space-y-1 sm:col-span-2">
-            <span className="text-sm text-gray-500">Goal title</span>
-            <input className="w-full rounded-lg border px-3 py-2" value={gLabel} onChange={(e) => setGLabel(e.target.value)} placeholder="e.g. DeepWork AI" />
-          </label>
-          <label className="space-y-1">
-            <span className="text-sm text-gray-500">Deadline</span>
-            <input type="date" className="w-full rounded-lg border px-3 py-2" value={gDeadline} onChange={(e) => setGDeadline(e.target.value)} />
-          </label>
-          <div className="sm:col-span-3">
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-gray-500">Color</span>
-              {COLORS.map((c) => (
-                <button key={c} onClick={() => setGColor(c)} className={`h-7 w-7 rounded-full ring-2 ring-offset-2 ${c} ${gColor === c ? "ring-gray-800" : "ring-gray-200"}`} />
-              ))}
-            </div>
+      <section className="rounded-3xl border border-gray-200/80 bg-white/80 p-4 shadow-lg backdrop-blur">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="space-y-1">
+            <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Create</p>
+            <div className="text-sm text-gray-600">Add focused goals or nest sub-goals.</div>
           </div>
-          <label className="space-y-1 sm:col-span-3">
-            <span className="text-sm text-gray-500">Parent goal (optional)</span>
-            <select
-              className="w-full rounded-lg border px-3 py-2"
-              value={gParentId ?? ""}
-              onChange={(e) => setGParentId(e.target.value ? Number(e.target.value) : null)}
+          <div className="flex gap-2">
+            <button
+              className={`rounded-full px-4 py-2 text-sm transition ${createMode === "goal" ? "bg-black text-white shadow" : "border bg-white/70 hover:border-black/40"}`}
+              onClick={() => { setCreateMode("goal"); setCreateOpen(true); }}
             >
-              <option value="">No parent (top-level)</option>
-              {topLevelGoals.map((g) => (
-                <option key={g.id} value={g.id}>{g.label}</option>
-              ))}
-            </select>
-            <p className="text-xs text-gray-500">Top-level goals are capped at 3. Use parents to add sub-goals.</p>
-          </label>
+              Goal
+            </button>
+            <button
+              className={`rounded-full px-4 py-2 text-sm transition ${createMode === "sub-goal" ? "bg-black text-white shadow" : "border bg-white/70 hover:border-black/40"}`}
+              onClick={() => { setCreateMode("sub-goal"); setCreateOpen(true); }}
+            >
+              Sub-goal
+            </button>
+            <button
+              className="rounded-full border px-4 py-2 text-sm transition hover:border-black/40"
+              onClick={() => setCreateOpen((v) => !v)}
+            >
+              {createOpen ? "Collapse" : "Expand"}
+            </button>
+          </div>
         </div>
-        <div className="pt-3">
-          <button
-            onClick={createGoal}
-            disabled={!gLabel.trim() || (gParentId == null && topLevelLimitReached)}
-            className="rounded-lg bg-black px-4 py-2 text-white disabled:opacity-50"
-          >
-            Add Goal
-          </button>
-        </div>
+
+        {createOpen && (
+          <div className="space-y-3 rounded-2xl bg-white/90 p-4 shadow-sm">
+            {createMode === "goal" ? (
+              <>
+                <h2 className="text-lg font-semibold">Create a goal</h2>
+                <div className="space-y-2">
+                  <label className="space-y-1 block">
+                    <span className="text-sm text-gray-500">Goal title</span>
+                    <input className="w-full rounded-lg border px-3 py-2" value={gLabel} onChange={(e) => setGLabel(e.target.value)} placeholder="e.g. DeepWork AI" />
+                  </label>
+                  <label className="space-y-1 block">
+                    <span className="text-sm text-gray-500">Deadline</span>
+                    <input type="date" className="w-full rounded-lg border px-3 py-2" value={gDeadline} onChange={(e) => setGDeadline(e.target.value)} />
+                  </label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm text-gray-500">Color</span>
+                    {COLORS.map((c) => (
+                      <button key={c} onClick={() => setGColor(c)} className={`h-7 w-7 rounded-full ring-2 ring-offset-2 ${c} ${gColor === c ? "ring-gray-800" : "ring-gray-200"}`} />
+                    ))}
+                  </div>
+                </div>
+                <button
+                  onClick={createGoal}
+                  disabled={!gLabel.trim()}
+                  className="w-full rounded-full bg-black px-4 py-2 text-white shadow disabled:opacity-50"
+                >
+                  Add goal
+                </button>
+              </>
+            ) : (
+              <>
+                <h2 className="text-lg font-semibold">Create a sub-goal</h2>
+                <div className="space-y-2">
+                  <label className="space-y-1 block">
+                    <span className="text-sm text-gray-500">Sub-goal title</span>
+                    <input className="w-full rounded-lg border px-3 py-2" value={sgLabel} onChange={(e) => setSgLabel(e.target.value)} placeholder="e.g. Write outline" />
+                  </label>
+                  <label className="space-y-1 block">
+                    <span className="text-sm text-gray-500">Parent goal</span>
+                    <select
+                      className="w-full rounded-lg border px-3 py-2"
+                      value={sgParentId ?? ""}
+                      onChange={(e) => setSgParentId(e.target.value ? Number(e.target.value) : null)}
+                    >
+                      <option value="">Select parent goal</option>
+                      {topLevelGoals.map((g) => (
+                        <option key={g.id} value={g.id}>{g.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="space-y-1 block">
+                    <span className="text-sm text-gray-500">Deadline</span>
+                    <input type="date" className="w-full rounded-lg border px-3 py-2" value={sgDeadline} onChange={(e) => setSgDeadline(e.target.value)} />
+                  </label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm text-gray-500">Color</span>
+                    {COLORS.map((c) => (
+                      <button key={c} onClick={() => setSgColor(c)} className={`h-7 w-7 rounded-full ring-2 ring-offset-2 ${c} ${sgColor === c ? "ring-gray-800" : "ring-gray-200"}`} />
+                    ))}
+                  </div>
+                </div>
+                <button
+                  onClick={createSubGoal}
+                  disabled={!sgLabel.trim() || !sgParentId}
+                  className="w-full rounded-full bg-black px-4 py-2 text-white shadow disabled:opacity-50"
+                >
+                  Add sub-goal
+                </button>
+              </>
+            )}
+          </div>
+        )}
       </section>
 
       {/* List & Edit */}
-      <section className="mt-6 rounded-2xl border p-4">
-        <h2 className="mb-3 text-lg font-semibold">Your goals</h2>
-        <div className="grid gap-3">
-          {goals.length === 0 ? (
-            <p className="text-gray-500">No goals yet.</p>
-          ) : (
-            roots.map((g) => {
-              const children = childMap.get(g.id) ?? [];
+      <section className="mt-2 rounded-3xl border border-gray-200/80 bg-white/80 p-4 shadow-lg backdrop-blur">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-lg font-semibold">Your Goals</h2>
+          <span className="text-xs text-gray-500">Drag goals across lanes; toggle sub-goals per card.</span>
+        </div>
+        {goals.length === 0 ? (
+          <p className="text-gray-500">No goals yet.</p>
+        ) : (
+          <div className="space-y-4 overflow-x-auto pb-1">
+            {["First Priority", "Second Priority", "Third Priority", "Least Priority"].map((title, bucket) => {
+              const bucketGoals = roots.filter((g) => (priority[g.id] ?? 0) === bucket);
+              const isActiveDrop = draggingId != null;
               return (
-                <div key={g.id} className="space-y-3 rounded-xl border p-3">
-                  {renderGoalRow(g)}
-                  {children.length > 0 && (
-                    <div className="space-y-2 border-t pt-3">
-                      <div className="text-sm font-semibold text-gray-700">Sub-goals</div>
-                      <div className="space-y-2">
-                        {children.map((child) => (
-                          <div key={child.id} className="rounded-lg bg-gray-50 p-3">
-                            {renderGoalRow(child, { isChild: true })}
-                          </div>
-                        ))}
-                      </div>
+                <div
+                  key={title}
+                  className="min-w-[320px] rounded-2xl border border-gray-200/80 bg-white/90 p-4 shadow-sm"
+                  onDragOver={(e) => {
+                    if (draggingId != null) e.preventDefault();
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    if (draggingId != null) moveGoal(draggingId, bucket);
+                    setDraggingId(null);
+                  }}
+                >
+                  <div className="mb-2 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-black text-xs font-bold text-white">
+                        {bucket + 1}
+                      </span>
+                      <h3 className="text-sm font-semibold">{title}</h3>
                     </div>
-                  )}
+                    <span className="text-xs text-gray-500">{bucketGoals.length} goal{bucketGoals.length === 1 ? "" : "s"}</span>
+                  </div>
+                  <div
+                    className={`flex min-h-[120px] flex-wrap gap-3 rounded-xl p-3 sm:flex-row transition ${
+                      isActiveDrop ? "border border-amber-300 bg-amber-50/70" : "bg-gray-50/80"
+                    }`}
+                  >
+                    {bucketGoals.length === 0 ? (
+                      <div
+                        className={`flex-1 rounded-lg border border-dashed p-3 text-center text-xs transition ${
+                          isActiveDrop ? "border-amber-300 bg-white/80 text-amber-700" : "text-gray-500"
+                        }`}
+                      >
+                        Drag a goal here{bucket === 3 ? " (cap flexes here)" : ""}
+                      </div>
+                    ) : (
+                      bucketGoals.map((g, idx) => {
+                        const children = childMap.get(g.id) ?? [];
+                        return (
+                          <div
+                            key={g.id}
+                            className="min-w-[260px] flex-1 space-y-2 rounded-xl border border-gray-200/80 bg-white p-4 shadow-sm transition hover:-translate-y-1 hover:shadow-lg"
+                            draggable
+                            onDragStart={() => setDraggingId(g.id)}
+                            onDragEnd={() => setDraggingId(null)}
+                          >
+                            {renderGoalRow(g, { orderIndex: idx })}
+                            {children.length > 0 && (
+                              <div className="space-y-2 rounded-lg border border-dashed bg-gray-50 p-2">
+                                <div className="flex items-center justify-between text-xs font-semibold text-gray-700">
+                                  <span>Sub-goals</span>
+                                  <button
+                                    className="rounded-full border px-2 py-0.5 text-[11px] transition hover:border-black/50"
+                                    onClick={() => setCollapsed((prev) => ({ ...prev, [g.id]: !prev[g.id] }))}
+                                    aria-label="Toggle sub-goals"
+                                  >
+                                    {collapsed[g.id] ? "▸" : "▾"}
+                                  </button>
+                                </div>
+                                {!collapsed[g.id] ? (
+                                  <div className="space-y-2">
+                                    {children.map((child) => (
+                                      <div
+                                        key={child.id}
+                                        className="rounded-lg bg-white p-2 shadow-sm transition hover:-translate-y-0.5 hover:bg-amber-50/70"
+                                      >
+                                        {renderGoalRow(child, { isChild: true })}
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div className="text-xs text-gray-500">Sub-goals hidden</div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
                 </div>
               );
-            })
-          )}
-        </div>
+            })}
+          </div>
+        )}
       </section>
 
       <ConfirmDialog

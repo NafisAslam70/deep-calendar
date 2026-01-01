@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 
 type Step = {
   /** CSS selector for the element to highlight; leave empty/null to center the card */

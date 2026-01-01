@@ -70,7 +70,6 @@ export default function DeepCalendarPage() {
   // Today override (if there&apos;s a Single-Day Plan)
   const todayIdx = new Date().getDay();
   const [todayOverrideItems, setTodayOverrideItems] = useState<RoutineItem[] | null>(null);
-  const [todayHasSingleDay, setTodayHasSingleDay] = useState<boolean>(false);
 
   useEffect(() => {
     if (authState === "anon")
@@ -110,13 +109,10 @@ export default function DeepCalendarPage() {
     const res = await apiJson<DayPackResp>(`/api/deepcal/day?date=${encodeURIComponent(date)}`);
     if (!res.ok) {
       setTodayOverrideItems(null);
-      setTodayHasSingleDay(false);
       return;
     }
     const blocks = res.json.pack?.blocks ?? [];
     const hasSingleDay = blocks.some((b) => b.source === "single-day");
-    setTodayHasSingleDay(hasSingleDay);
-
     if (hasSingleDay) {
       const mapped: RoutineItem[] = blocks
         .slice()

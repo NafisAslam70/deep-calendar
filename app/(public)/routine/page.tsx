@@ -465,7 +465,7 @@ export default function RoutinePage() {
             title: "Outside available gaps",
             body: (
               <div className="text-sm">
-                <div className="mb-2">With <b>Fill only gaps</b>, sprints must fit entirely inside today's gaps (bounded by Day Window).</div>
+                <div className="mb-2">With <b>Fill only gaps</b>, sprints must fit entirely inside today&apos;s gaps (bounded by Day Window).</div>
                 <div className="mb-1 font-medium">Available gaps</div>
                 {gapsToday.length ? (
                   <ul className="list-disc pl-5">
@@ -1078,7 +1078,7 @@ export default function RoutinePage() {
           {/* Compose AFTER status */}
           <section className="rounded-2xl border p-4">
             <h2 className="mb-3 text-lg font-semibold">Compose Block (breaks → sprints)</h2>
-            <p className="text-sm text-gray-600">Pick days, add breaks, and generate sprints. Blocks are limited to each day's Day Window if set. <b>Opened day is locked.</b></p>
+            <p className="text-sm text-gray-600">Pick days, add breaks, and generate sprints. Blocks are limited to each day&apos;s Day Window if set. <b>Opened day is locked.</b></p>
 
             <div className="mt-3 grid gap-3 sm:grid-cols-6">
               <label className="space-y-1 sm:col-span-2">
@@ -1294,7 +1294,7 @@ export default function RoutinePage() {
           <section className="rounded-2xl border p-4">
             <h2 className="mb-3 text-lg font-semibold">Push Draft</h2>
             <p className="text-sm text-gray-600">
-              Window-aware: we clip to each day's Day Window (if set). <b>Opened day is locked.</b>
+              Window-aware: we clip to each day&apos;s Day Window (if set). <b>Opened day is locked.</b>
             </p>
             <button onClick={pushDraft} className="mt-2 w-full rounded-lg bg-emerald-600 px-4 py-2 text-white sm:w-auto">
               Push drafted to selected days

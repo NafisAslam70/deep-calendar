@@ -215,10 +215,11 @@ export async function POST(req: NextRequest, ctx: Ctx) {
         return NextResponse.json({ error: "invalid parentGoalId" }, { status: 400 });
       }
     }
-    const [g] = await db
+    const inserted = await db
       .insert(goals)
       .values({ userId: uid, label, color, deadlineISO: deadlineISO ?? null, parentGoalId: parentId })
       .returning();
+    const g = Array.isArray(inserted) ? inserted[0] : (inserted as any)?.rows?.[0];
     return NextResponse.json({ goal: g });
   }
 

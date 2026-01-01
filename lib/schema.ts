@@ -11,15 +11,23 @@ import {
 } from "drizzle-orm/pg-core";
 
 /* USERS — add publicKey + publicKeyCreatedAt for public API */
-export const users = pgTable("users", {
-  id: serial("id").primaryKey(),
-  email: text("email").notNull().unique(),
-  hash: text("hash").notNull(),
-  name: text("name"),
-  publicKey: text("public_key").unique(),
-  publicKeyCreatedAt: timestamp("public_key_created_at", { withTimezone: true }),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
-});
+export const users = pgTable(
+  "users",
+  {
+    id: serial("id").primaryKey(),
+    email: text("email").notNull().unique(),
+    hash: text("hash").notNull(),
+    name: text("name"),
+    publicKey: text("public_key").unique(),
+    publicKeyCreatedAt: timestamp("public_key_created_at", { withTimezone: true }),
+    resetToken: text("reset_token"),
+    resetTokenExpiresAt: timestamp("reset_token_expires_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  },
+  (t) => ({
+    resetTokenIdx: index("idx_users_reset_token").on(t.resetToken),
+  })
+);
 
 /* GOALS */
 export const goals = pgTable(
@@ -29,6 +37,7 @@ export const goals = pgTable(
     userId: integer("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
+    parentGoalId: integer("parent_goal_id").references(() => goals.id, { onDelete: "set null" }),
     label: text("label").notNull(),
     color: text("color").notNull().default("bg-blue-500"),
     deadlineISO: text("deadline_iso"),
@@ -37,6 +46,7 @@ export const goals = pgTable(
   },
   (t) => ({
     byUser: index("idx_goals_user").on(t.userId),
+    byParent: index("idx_goals_parent").on(t.parentGoalId),
   })
 );
 

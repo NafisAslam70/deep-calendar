@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 /* ================= Types ================= */
 type AuthState = "loading" | "authed" | "anon";
 type Depth = 1 | 2 | 3;
-type Goal = { id: number; label: string; color: string; deadlineISO?: string | null };
+type Goal = { id: number; label: string; color: string; deadlineISO?: string | null; parentGoalId?: number | null };
 type RoutineWindow = { openMin: number; closeMin: number } | null;
 type DraftSprint = { s: number; e: number };
 type DraftBreak = { s: number; e: number };

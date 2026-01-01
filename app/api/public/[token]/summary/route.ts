@@ -104,6 +104,7 @@ export async function GET(
         label: g.label,
         color: g.color,
         deadlineISO: g.deadlineISO ?? null,
+        parentGoalId: g.parentGoalId ?? null,
       })),
       routine: {
         windows: wins.map((w) => ({

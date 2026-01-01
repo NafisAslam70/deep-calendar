@@ -196,11 +196,28 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   const body = await req.json().catch(() => ({}));
 
   if (slug[0] === "goals") {
-    const { label, color, deadlineISO } = body || {};
+    const { label, color, deadlineISO, parentGoalId } = body || {};
     if (!label || !color) return NextResponse.json({ error: "label,color required" }, { status: 400 });
+    let parentId: number | null = null;
+    if (parentGoalId !== undefined) {
+      if (parentGoalId === null) {
+        parentId = null;
+      } else if (Number.isInteger(parentGoalId)) {
+        const [parent] = await db
+          .select({ id: goals.id, userId: goals.userId, isArchived: goals.isArchived })
+          .from(goals)
+          .where(eq(goals.id, parentGoalId));
+        if (!parent || parent.userId !== uid || parent.isArchived) {
+          return NextResponse.json({ error: "invalid parentGoalId" }, { status: 400 });
+        }
+        parentId = parent.id;
+      } else {
+        return NextResponse.json({ error: "invalid parentGoalId" }, { status: 400 });
+      }
+    }
     const [g] = await db
       .insert(goals)
-      .values({ userId: uid, label, color, deadlineISO: deadlineISO ?? null })
+      .values({ userId: uid, label, color, deadlineISO: deadlineISO ?? null, parentGoalId: parentId })
       .returning();
     return NextResponse.json({ goal: g });
   }
@@ -572,6 +589,48 @@ export async function PATCH(req: NextRequest) {
   const url = new URL(req.url);
   const body = await req.json().catch(() => ({}));
 
+  if (url.pathname.includes("/goals")) {
+    const id = Number(url.searchParams.get("id"));
+    if (!Number.isInteger(id)) return NextResponse.json({ error: "invalid id" }, { status: 400 });
+
+    let nextParent: number | null | undefined;
+    if ("parentGoalId" in body) {
+      if (body.parentGoalId === null) {
+        nextParent = null;
+      } else if (Number.isInteger(body.parentGoalId)) {
+        if (body.parentGoalId === id) {
+          return NextResponse.json({ error: "parentGoalId cannot equal id" }, { status: 400 });
+        }
+        const [parent] = await db
+          .select({ id: goals.id, userId: goals.userId, isArchived: goals.isArchived })
+          .from(goals)
+          .where(eq(goals.id, body.parentGoalId));
+        if (!parent || parent.userId !== uid || parent.isArchived) {
+          return NextResponse.json({ error: "invalid parentGoalId" }, { status: 400 });
+        }
+        nextParent = parent.id;
+      } else {
+        return NextResponse.json({ error: "invalid parentGoalId" }, { status: 400 });
+      }
+    }
+
+    const updates: Record<string, unknown> = {
+      ...(typeof body.label === "string" && body.label.trim() ? { label: body.label.trim() } : {}),
+      ...(typeof body.color === "string" && body.color.trim() ? { color: body.color.trim() } : {}),
+      ...(body.deadlineISO === null
+        ? { deadlineISO: null }
+        : typeof body.deadlineISO === "string"
+        ? { deadlineISO: body.deadlineISO }
+        : {}),
+      ...(nextParent !== undefined ? { parentGoalId: nextParent } : {}),
+    };
+
+    if (Object.keys(updates).length === 0) return NextResponse.json({ ok: true });
+
+    await db.update(goals).set(updates).where(and(eq(goals.id, id), eq(goals.userId, uid)));
+    return NextResponse.json({ ok: true });
+  }
+
   if (url.pathname.includes("/blocks")) {
     const id = Number(url.searchParams.get("id"));
     if (!Number.isInteger(id)) return NextResponse.json({ error: "invalid id" }, { status: 400 });
@@ -614,6 +673,7 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
     const id = Number(url.searchParams.get("id"));
     if (!Number.isInteger(id)) return NextResponse.json({ error: "invalid id" }, { status: 400 });
     await db.update(goals).set({ isArchived: true }).where(and(eq(goals.userId, uid), eq(goals.id, id)));
+    await db.update(goals).set({ isArchived: true }).where(and(eq(goals.userId, uid), eq(goals.parentGoalId, id)));
     return NextResponse.json({ ok: true });
   }
 

@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 
 /* Types */
 type AuthState = "loading" | "authed" | "anon";
-type Goal = { id: number; label: string; color: string; deadlineISO?: string | null };
+type Goal = { id: number; label: string; color: string; deadlineISO?: string | null; parentGoalId?: number | null };
 
 /* Utils */
 const COLORS = ["bg-blue-500", "bg-emerald-500", "bg-amber-500", "bg-fuchsia-500"] as const;
@@ -55,11 +55,13 @@ export default function GoalsPage() {
   const [gLabel, setGLabel] = useState("");
   const [gColor, setGColor] = useState<Color>(COLORS[0]);
   const [gDeadline, setGDeadline] = useState("");
+  const [gParentId, setGParentId] = useState<number | null>(null);
 
   const [editingGoalId, setEditingGoalId] = useState<number | null>(null);
   const [editLabel, setEditLabel] = useState("");
   const [editColor, setEditColor] = useState<Color>(COLORS[0]);
   const [editDeadline, setEditDeadline] = useState("");
+  const [editParentId, setEditParentId] = useState<number | null>(null);
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmTitle, setConfirmTitle] = useState("");
@@ -87,15 +89,40 @@ export default function GoalsPage() {
   useEffect(() => { if (authState === "anon") router.replace(`/auth/signin?next=${encodeURIComponent("/goals")}`); }, [authState, router]);
   useEffect(() => { void loadMe(); void loadGoals(); }, [loadMe, loadGoals]);
 
+  const topLevelGoals = useMemo(() => goals.filter((g) => !g.parentGoalId), [goals]);
+  const childMap = useMemo(() => {
+    const m = new Map<number, Goal[]>();
+    for (const g of goals) {
+      if (g.parentGoalId) {
+        const arr = m.get(g.parentGoalId) ?? [];
+        arr.push(g);
+        m.set(g.parentGoalId, arr);
+      }
+    }
+    return m;
+  }, [goals]);
+  const topLevelLimitReached = topLevelGoals.length >= 3;
+  const roots = topLevelGoals.length ? topLevelGoals : goals;
+  const goalById = useMemo<Record<number, Goal>>(
+    () => Object.fromEntries(goals.map((g) => [g.id, g])) as Record<number, Goal>,
+    [goals]
+  );
+
   async function createGoal() {
     if (!gLabel.trim()) return;
-    if (goals.length >= 3) {
-      askConfirm({ title: "Goal limit", body: "Max 3 goals allowed.", onConfirm: () => setConfirmOpen(false) });
+    const isTopLevel = gParentId == null;
+    if (topLevelLimitReached && isTopLevel) {
+      askConfirm({ title: "Goal limit", body: "Top-level goals are limited to 3. Add sub-goals under an existing goal.", onConfirm: () => setConfirmOpen(false) });
       return;
     }
     const { ok } = await apiJson("/api/deepcal/goals", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ label: gLabel.trim(), color: gColor, deadlineISO: gDeadline || undefined }),
+      body: JSON.stringify({
+        label: gLabel.trim(),
+        color: gColor,
+        deadlineISO: gDeadline || undefined,
+        parentGoalId: gParentId ?? null,
+      }),
     });
     if (ok) { setGLabel(""); setGDeadline(""); await loadGoals(); }
   }
@@ -105,9 +132,10 @@ export default function GoalsPage() {
     setEditLabel(g.label);
     setEditColor(isColor(g.color) ? g.color : COLORS[0]);
     setEditDeadline(g.deadlineISO || "");
+    setEditParentId(g.parentGoalId ?? null);
   }
 
-  function cancelEdit() { setEditingGoalId(null); }
+  function cancelEdit() { setEditingGoalId(null); setEditParentId(null); }
 
   function saveEditModal() {
     askConfirm({
@@ -117,7 +145,12 @@ export default function GoalsPage() {
         if (!editingGoalId) return;
         const { ok } = await apiJson(`/api/deepcal/goals?id=${editingGoalId}`, {
           method: "PATCH", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ label: editLabel.trim(), color: editColor, deadlineISO: editDeadline || null }),
+          body: JSON.stringify({
+            label: editLabel.trim(),
+            color: editColor,
+            deadlineISO: editDeadline || null,
+            parentGoalId: editParentId ?? null,
+          }),
         });
         if (ok) { setEditingGoalId(null); await loadGoals(); }
         setConfirmOpen(false);
@@ -126,12 +159,86 @@ export default function GoalsPage() {
   }
 
   function deleteGoalModal(id: number, label: string) {
+    const childCount = (childMap.get(id) ?? []).length;
     askConfirm({
       title: "Delete goal?",
-      body: <span>This removes <b>{label}</b>.</span>,
+      body: (
+        <span>
+          This removes <b>{label}</b>.
+          {childCount > 0 ? (
+            <span> It will also archive {childCount} sub-goal{childCount > 1 ? "s" : ""}.</span>
+          ) : null}
+        </span>
+      ),
       confirmText: "Delete", destructive: true,
       onConfirm: async () => { await apiJson(`/api/deepcal/goals?id=${id}`, { method: "DELETE" }); await loadGoals(); setConfirmOpen(false); },
     });
+  }
+
+  function renderGoalRow(goal: Goal, opts?: { isChild?: boolean }) {
+    const isEditing = editingGoalId === goal.id;
+    const parentName =
+      goal.parentGoalId != null
+        ? goalById[goal.parentGoalId]?.label ?? `Goal #${goal.parentGoalId}`
+        : null;
+    const parentOptions = topLevelGoals.filter((p) => p.id !== goal.id);
+
+    if (!isEditing) {
+      return (
+        <div className={`flex items-center justify-between ${opts?.isChild ? "flex-col gap-2 sm:flex-row" : ""}`}>
+          <div className="flex items-center gap-3">
+            <span className={`inline-block h-3 w-3 rounded-full ${goal.color || "bg-gray-400"}`} />
+            <div>
+              <div className="font-medium">{goal.label}</div>
+              {parentName && <div className="text-xs text-gray-500">Sub-goal of {parentName}</div>}
+              {goal.deadlineISO && <div className="text-xs text-gray-500">Due: {goal.deadlineISO}</div>}
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button className="rounded-lg border px-3 py-1.5 text-sm" onClick={() => beginEdit(goal)}>Edit</button>
+            <button className="rounded-lg border px-3 py-1.5 text-sm" onClick={() => deleteGoalModal(goal.id, goal.label)}>Delete</button>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className={`grid gap-3 ${opts?.isChild ? "" : "sm:grid-cols-5"}`}>
+        <label className="space-y-1 sm:col-span-2">
+          <span className="text-sm text-gray-500">Title</span>
+          <input className="w-full rounded-lg border px-3 py-2" value={editLabel} onChange={(e) => setEditLabel(e.target.value)} />
+        </label>
+        <label className="space-y-1">
+          <span className="text-sm text-gray-500">Deadline</span>
+          <input type="date" className="w-full rounded-lg border px-3 py-2" value={editDeadline} onChange={(e) => setEditDeadline(e.target.value)} />
+        </label>
+        <div className="space-y-1 sm:col-span-2">
+          <span className="text-sm text-gray-500">Color</span>
+          <div className="flex items-center gap-2">
+            {COLORS.map((c) => (
+              <button key={c} onClick={() => setEditColor(c)} className={`h-7 w-7 rounded-full ring-2 ring-offset-2 ${c} ${editColor === c ? "ring-gray-800" : "ring-gray-200"}`} />
+            ))}
+          </div>
+        </div>
+        <label className="space-y-1 sm:col-span-3">
+          <span className="text-sm text-gray-500">Parent</span>
+          <select
+            className="w-full rounded-lg border px-3 py-2"
+            value={editParentId ?? ""}
+            onChange={(e) => setEditParentId(e.target.value ? Number(e.target.value) : null)}
+          >
+            <option value="">No parent (top-level)</option>
+            {parentOptions.map((p) => (
+              <option key={p.id} value={p.id}>{p.label}</option>
+            ))}
+          </select>
+        </label>
+        <div className="sm:col-span-5 flex gap-2">
+          <button className="rounded-lg border px-3 py-1.5 text-sm" onClick={cancelEdit}>Cancel</button>
+          <button className="rounded-lg bg-black px-3 py-1.5 text-sm text-white" onClick={saveEditModal}>Save</button>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -139,14 +246,14 @@ export default function GoalsPage() {
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Goals</h1>
-          <p className="text-sm text-gray-600">Pick up to three, edit anytime.</p>
+          <p className="text-sm text-gray-600">Pick up to three top-level goals, then add sub-goals underneath.</p>
         </div>
         <a className="rounded-lg border px-3 py-1.5 text-sm" href="/routine">Build Routine</a>
       </div>
 
       {/* Create */}
       <section className="rounded-2xl border p-4">
-        <h2 className="mb-3 text-lg font-semibold">Add a goal</h2>
+        <h2 className="mb-3 text-lg font-semibold">Add a goal or sub-goal</h2>
         <div className="grid gap-3 sm:grid-cols-3">
           <label className="space-y-1 sm:col-span-2">
             <span className="text-sm text-gray-500">Goal title</span>
@@ -164,9 +271,29 @@ export default function GoalsPage() {
               ))}
             </div>
           </div>
+          <label className="space-y-1 sm:col-span-3">
+            <span className="text-sm text-gray-500">Parent goal (optional)</span>
+            <select
+              className="w-full rounded-lg border px-3 py-2"
+              value={gParentId ?? ""}
+              onChange={(e) => setGParentId(e.target.value ? Number(e.target.value) : null)}
+            >
+              <option value="">No parent (top-level)</option>
+              {topLevelGoals.map((g) => (
+                <option key={g.id} value={g.id}>{g.label}</option>
+              ))}
+            </select>
+            <p className="text-xs text-gray-500">Top-level goals are capped at 3. Use parents to add sub-goals.</p>
+          </label>
         </div>
         <div className="pt-3">
-          <button onClick={createGoal} disabled={!gLabel.trim() || goals.length >= 3} className="rounded-lg bg-black px-4 py-2 text-white disabled:opacity-50">Add Goal</button>
+          <button
+            onClick={createGoal}
+            disabled={!gLabel.trim() || (gParentId == null && topLevelLimitReached)}
+            className="rounded-lg bg-black px-4 py-2 text-white disabled:opacity-50"
+          >
+            Add Goal
+          </button>
         </div>
       </section>
 
@@ -174,51 +301,30 @@ export default function GoalsPage() {
       <section className="mt-6 rounded-2xl border p-4">
         <h2 className="mb-3 text-lg font-semibold">Your goals</h2>
         <div className="grid gap-3">
-          {goals.length === 0 ? <p className="text-gray-500">No goals yet.</p> : goals.map((g) => {
-            const isEditing = editingGoalId === g.id;
-            return (
-              <div key={g.id} className="rounded-xl border p-3">
-                {!isEditing ? (
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <span className={`inline-block h-3 w-3 rounded-full ${g.color || "bg-gray-400"}`} />
-                      <div>
-                        <div className="font-medium">{g.label}</div>
-                        {g.deadlineISO && <div className="text-xs text-gray-500">Due: {g.deadlineISO}</div>}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button className="rounded-lg border px-3 py-1.5 text-sm" onClick={() => beginEdit(g)}>Edit</button>
-                      <button className="rounded-lg border px-3 py-1.5 text-sm" onClick={() => deleteGoalModal(g.id, g.label)}>Delete</button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="grid gap-3 sm:grid-cols-5">
-                    <label className="space-y-1 sm:col-span-2">
-                      <span className="text-sm text-gray-500">Title</span>
-                      <input className="w-full rounded-lg border px-3 py-2" value={editLabel} onChange={(e) => setEditLabel(e.target.value)} />
-                    </label>
-                    <label className="space-y-1">
-                      <span className="text-sm text-gray-500">Deadline</span>
-                      <input type="date" className="w-full rounded-lg border px-3 py-2" value={editDeadline} onChange={(e) => setEditDeadline(e.target.value)} />
-                    </label>
-                    <div className="space-y-1 sm:col-span-2">
-                      <span className="text-sm text-gray-500">Color</span>
-                      <div className="flex items-center gap-2">
-                        {COLORS.map((c) => (
-                          <button key={c} onClick={() => setEditColor(c)} className={`h-7 w-7 rounded-full ring-2 ring-offset-2 ${c} ${editColor === c ? "ring-gray-800" : "ring-gray-200"}`} />
+          {goals.length === 0 ? (
+            <p className="text-gray-500">No goals yet.</p>
+          ) : (
+            roots.map((g) => {
+              const children = childMap.get(g.id) ?? [];
+              return (
+                <div key={g.id} className="space-y-3 rounded-xl border p-3">
+                  {renderGoalRow(g)}
+                  {children.length > 0 && (
+                    <div className="space-y-2 border-t pt-3">
+                      <div className="text-sm font-semibold text-gray-700">Sub-goals</div>
+                      <div className="space-y-2">
+                        {children.map((child) => (
+                          <div key={child.id} className="rounded-lg bg-gray-50 p-3">
+                            {renderGoalRow(child, { isChild: true })}
+                          </div>
                         ))}
                       </div>
                     </div>
-                    <div className="sm:col-span-5 flex gap-2">
-                      <button className="rounded-lg border px-3 py-1.5 text-sm" onClick={cancelEdit}>Cancel</button>
-                      <button className="rounded-lg bg-black px-3 py-1.5 text-sm text-white" onClick={saveEditModal}>Save</button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
+                  )}
+                </div>
+              );
+            })
+          )}
         </div>
       </section>
 

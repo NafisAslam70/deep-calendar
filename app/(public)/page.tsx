@@ -7,7 +7,7 @@ import WalkthroughTour from "./_components/WalkthroughTour";
 /* ---------- Types ---------- */
 type AuthState = "loading" | "authed" | "anon";
 type Depth = 1 | 2 | 3;
-type Goal = { id: number; label: string; color: string };
+type Goal = { id: number; label: string; color: string; parentGoalId?: number | null };
 type RoutineWindow = { openMin: number; closeMin: number } | null;
 type Block = {
   id: number;

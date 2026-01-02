@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
 
-type TabKey = "home" | "calendar" | "routine" | "goals" | undefined;
+type TabKey = "home" | "calendar" | "routine" | "goals" | "community" | undefined;
 
 export default function TopTabs({ active }: { active?: TabKey }) {
   const pathname = usePathname();
@@ -19,6 +19,7 @@ export default function TopTabs({ active }: { active?: TabKey }) {
       { key: "calendar" as TabKey, href: "/deep-calendar",label: "Your Deep Calendar" },
       { key: "routine" as TabKey,  href: "/routine",      label: "Your Deep Routine" },
       { key: "goals" as TabKey,    href: "/goals",        label: "Goals" },
+      { key: "community" as TabKey, href: "/community",   label: "Community" },
     ]),
     []
   );

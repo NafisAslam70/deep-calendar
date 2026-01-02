@@ -56,6 +56,48 @@ export const goals = pgTable(
   })
 );
 
+/* COMMUNITY POSTS */
+export const communityPosts = pgTable(
+  "community_posts",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(), // goal | routine | shutdown
+    goalId: integer("goal_id"),
+    weekday: smallint("weekday"),
+    dayISO: text("day_iso"),
+    message: text("message"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  },
+  (t) => ({
+    byUser: index("idx_community_posts_user").on(t.userId),
+    byKind: index("idx_community_posts_kind").on(t.kind),
+  })
+);
+
+/* COMMUNITY PROFILES (opt-in + contact) */
+export const communityProfiles = pgTable(
+  "community_profiles",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" })
+      .unique(),
+    displayName: text("display_name"),
+    contactEmail: text("contact_email"),
+    contactWhatsApp: text("contact_whatsapp"),
+    optedIn: boolean("opted_in").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+  },
+  (t) => ({
+    byOptIn: index("idx_profiles_optedin").on(t.optedIn),
+  })
+);
+
 /* ROUTINE WINDOWS (per weekday open/close time) */
 export const routineWindows = pgTable(
   "routine_windows",

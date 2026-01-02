@@ -222,7 +222,9 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       .insert(goals)
       .values({ userId: uid, label, color, deadlineISO: deadlineISO ?? null, parentGoalId: parentId, priority })
       .returning();
-    const g = Array.isArray(inserted) ? inserted[0] : (inserted as any)?.rows?.[0];
+    const g = Array.isArray(inserted)
+      ? inserted[0]
+      : (inserted as { rows?: Array<typeof goals.$inferSelect> })?.rows?.[0];
     return NextResponse.json({ goal: g });
   }
 

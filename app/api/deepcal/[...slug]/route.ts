@@ -197,6 +197,9 @@ export async function POST(req: NextRequest, ctx: Ctx) {
 
   if (slug[0] === "goals") {
     const { label, color, deadlineISO, parentGoalId } = body || {};
+    const prioRaw = body?.priority;
+    const priority =
+      typeof prioRaw === "number" && Number.isInteger(prioRaw) && prioRaw >= 0 && prioRaw <= 3 ? prioRaw : 0;
     if (!label || !color) return NextResponse.json({ error: "label,color required" }, { status: 400 });
     let parentId: number | null = null;
     if (parentGoalId !== undefined) {
@@ -217,9 +220,9 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     }
     const inserted = await db
       .insert(goals)
-      .values({ userId: uid, label, color, deadlineISO: deadlineISO ?? null, parentGoalId: parentId })
+      .values({ userId: uid, label, color, deadlineISO: deadlineISO ?? null, parentGoalId: parentId, priority })
       .returning();
-    const g = Array.isArray(inserted) ? inserted[0] : (inserted as { rows?: Array<(typeof goals.$inferSelect)> })?.rows?.[0];
+    const g = Array.isArray(inserted) ? inserted[0] : (inserted as any)?.rows?.[0];
     return NextResponse.json({ goal: g });
   }
 
@@ -590,6 +593,23 @@ export async function PATCH(req: NextRequest) {
   const url = new URL(req.url);
   const body = await req.json().catch(() => ({}));
 
+  if (url.pathname.includes("/goals/priorities")) {
+    const priorities: Record<string, unknown> = body?.priorities ?? {};
+    const entries = Object.entries(priorities).filter(
+      ([, v]) => typeof v === "number" && Number.isInteger(v as number)
+    ) as Array<[string, number]>;
+
+    for (const [idStr, prio] of entries) {
+      const id = Number(idStr);
+      if (!Number.isInteger(id)) continue;
+      await db
+        .update(goals)
+        .set({ priority: prio })
+        .where(and(eq(goals.id, id), eq(goals.userId, uid), eq(goals.isArchived, false)));
+    }
+    return NextResponse.json({ ok: true, updated: entries.length });
+  }
+
   if (url.pathname.includes("/goals")) {
     const id = Number(url.searchParams.get("id"));
     if (!Number.isInteger(id)) return NextResponse.json({ error: "invalid id" }, { status: 400 });
@@ -618,6 +638,7 @@ export async function PATCH(req: NextRequest) {
     const updates: Record<string, unknown> = {
       ...(typeof body.label === "string" && body.label.trim() ? { label: body.label.trim() } : {}),
       ...(typeof body.color === "string" && body.color.trim() ? { color: body.color.trim() } : {}),
+      ...(Number.isInteger(body.priority) ? { priority: body.priority } : {}),
       ...(body.deadlineISO === null
         ? { deadlineISO: null }
         : typeof body.deadlineISO === "string"

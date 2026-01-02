@@ -5,7 +5,14 @@ import { useRouter } from "next/navigation";
 
 /* Types */
 type AuthState = "loading" | "authed" | "anon";
-type Goal = { id: number; label: string; color: string; deadlineISO?: string | null; parentGoalId?: number | null };
+type Goal = {
+  id: number;
+  label: string;
+  color: string;
+  deadlineISO?: string | null;
+  parentGoalId?: number | null;
+  priority?: number | null;
+};
 
 /* Utils */
 const COLORS = ["bg-blue-500", "bg-emerald-500", "bg-amber-500", "bg-fuchsia-500"] as const;
@@ -115,6 +122,7 @@ export default function GoalsPage() {
   const [draggingId, setDraggingId] = useState<number | null>(null);
   const [priority, setPriority] = useState<Record<number, number>>({});
   const [collapsed, setCollapsed] = useState<Record<number, boolean>>({});
+  const [savingPriority, setSavingPriority] = useState<"idle" | "saving" | "saved" | "error">("idle");
 
   // hydrate and align priority / collapsed state with localStorage + current goals
   useEffect(() => {
@@ -132,7 +140,9 @@ export default function GoalsPage() {
     setPriority((prev) => {
       const next: Record<number, number> = {};
       for (const g of goals) {
-        if (stored[g.id] != null) next[g.id] = stored[g.id];
+        const serverPrio = typeof g.priority === "number" ? g.priority : null;
+        if (serverPrio != null) next[g.id] = serverPrio;
+        else if (stored[g.id] != null) next[g.id] = stored[g.id];
         else if (prev[g.id] != null) next[g.id] = prev[g.id];
         else next[g.id] = 0;
       }
@@ -159,6 +169,18 @@ export default function GoalsPage() {
   const moveGoal = (goalId: number, bucket: number) => {
     setPriority((prev) => ({ ...prev, [goalId]: bucket }));
   };
+
+  async function savePriorities() {
+    if (!goals.length) return;
+    setSavingPriority("saving");
+    const { ok } = await apiJson("/api/deepcal/goals/priorities", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ priorities: priority }),
+    });
+    setSavingPriority(ok ? "saved" : "error");
+    if (ok) setTimeout(() => setSavingPriority("idle"), 1500);
+  }
 
   async function createGoal() {
     if (!gLabel.trim()) return;
@@ -187,15 +209,17 @@ export default function GoalsPage() {
   }
 
   async function createGoalSubmit(payload: { label: string; color: Color; deadlineISO?: string; parentGoalId: number | null; }, bucketOverride?: number) {
+    const priorityValue =
+      bucketOverride ?? (payload.parentGoalId ? priority[payload.parentGoalId] ?? 0 : 0);
     const { ok, json } = await apiJson<{ goal: Goal }>("/api/deepcal/goals", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...payload, priority: priorityValue }),
     });
     if (ok) {
       const newGoal = (json as { goal?: Goal })?.goal;
       if (newGoal) {
-        setPriority((prev) => ({ ...prev, [newGoal.id]: bucketOverride ?? prev[newGoal.id] ?? 0 }));
+        setPriority((prev) => ({ ...prev, [newGoal.id]: priorityValue }));
       }
       await loadGoals();
     }
@@ -458,7 +482,22 @@ export default function GoalsPage() {
       <section className="mt-2 rounded-3xl border border-gray-200/80 bg-white/80 p-4 shadow-lg backdrop-blur">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-lg font-semibold">Your Goals</h2>
-          <span className="text-xs text-gray-500">Drag goals across lanes; toggle sub-goals per card.</span>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500">Drag goals across lanes; toggle sub-goals per card.</span>
+            <button
+              className="rounded-full border px-3 py-1.5 text-xs transition hover:border-black/40"
+              onClick={savePriorities}
+              disabled={savingPriority === "saving"}
+            >
+              {savingPriority === "saving"
+                ? "Saving..."
+                : savingPriority === "saved"
+                ? "Saved"
+                : savingPriority === "error"
+                ? "Retry save"
+                : "Save priorities"}
+            </button>
+          </div>
         </div>
         {goals.length === 0 ? (
           <p className="text-gray-500">No goals yet.</p>

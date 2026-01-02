@@ -39,6 +39,7 @@ export const goals = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     parentGoalId: integer("parent_goal_id"),
+    priority: smallint("priority").notNull().default(0),
     label: text("label").notNull(),
     color: text("color").notNull().default("bg-blue-500"),
     deadlineISO: text("deadline_iso"),

@@ -21,8 +21,10 @@ function minToTime(min: number) {
   return `${h}:${m}`;
 }
 
-export default function SharePage({ params }: { params: any }) {
-  const token = (params as { token?: string })?.token ?? "";
+type ShareParams = Promise<{ token?: string }>;
+
+export default function SharePage({ params }: { params: ShareParams }) {
+  const [token, setToken] = useState("");
   const searchParams = useSearchParams();
   const view = (searchParams.get("view") || "goals") as "goals" | "routine" | "shutdown";
   const [data, setData] = useState<Summary | null>(null);
@@ -30,6 +32,11 @@ export default function SharePage({ params }: { params: any }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    params.then((p) => setToken(p?.token ?? ""));
+  }, [params]);
+
+  useEffect(() => {
+    if (!token) return;
     setLoading(true);
     setError(null);
     fetch(`/api/public/${token}/summary?range=30d`)
@@ -40,7 +47,7 @@ export default function SharePage({ params }: { params: any }) {
       .then((j) => setData(j))
       .catch(() => setError("Link not found or expired"))
       .finally(() => setLoading(false));
-  }, [params.token]);
+  }, [token, params]);
 
   const topGoals = useMemo(() => (data ? data.goals.filter((g) => !g.parentGoalId) : []), [data]);
   const byParent = useMemo(() => {

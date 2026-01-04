@@ -86,7 +86,7 @@ export default function CommunityPage() {
         const { publicKey } = (await tokenRes.json()) as { publicKey: string | null };
         setPublicToken(publicKey);
       }
-    } catch (_e) {
+    } catch {
     }
   }
 

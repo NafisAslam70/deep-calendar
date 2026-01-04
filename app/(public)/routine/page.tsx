@@ -187,6 +187,11 @@ export default function RoutinePage() {
   const [goals, setGoals] = useState<Goal[]>([]);
   const [windowsByDay, setWindowsByDay] = useState<Record<number, RoutineWindow>>({});
   const [existingByDay, setExistingByDay] = useState<Record<number, RoutineItem[]>>({});
+  const goalMap = useMemo(() => {
+    const m = new Map<number, Goal>();
+    goals.forEach((g) => m.set(g.id, g));
+    return m;
+  }, [goals]);
 
   const loadGoals = useCallback(async () => {
     const { ok, json } = await apiJson<{ goals: Goal[] }>("/api/deepcal/goals");
@@ -1052,13 +1057,19 @@ export default function RoutinePage() {
                       <div className="text-sm text-gray-500">No blocks.</div>
                     ) : (
                       <ul className="mt-1 space-y-1 text-sm">
-                        {items.map((it) => (
-                          <li key={it.id} className="rounded border px-2 py-1">
-                            {fromMinutes(it.startMin)}–{fromMinutes(it.endMin)} {it.label ? `• ${it.label}` : ""} (L{it.depthLevel})
-                          </li>
-                        ))}
-                      </ul>
-                    )}
+                    {items.map((it) => (
+                      <li key={it.id} className="rounded border px-2 py-1">
+                        <div className="flex items-center justify-between text-sm">
+                          <span>{fromMinutes(it.startMin)}–{fromMinutes(it.endMin)} {it.label ? `• ${it.label}` : ""}</span>
+                          <span className="text-xs text-gray-500">L{it.depthLevel}</span>
+                        </div>
+                        <div className="text-xs text-gray-600">
+                          Goal: {it.goalId ? goalMap.get(it.goalId)?.label ?? `Goal #${it.goalId}` : "None"}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
                     <div className="mt-2">
                       <button
                         className={`w-full rounded-lg border px-3 py-1.5 text-xs sm:w-auto ${locked ? "cursor-not-allowed opacity-50" : ""}`}

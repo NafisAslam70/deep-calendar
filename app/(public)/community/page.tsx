@@ -51,6 +51,7 @@ export default function CommunityPage() {
         { label: "Goals", href: `${shareOrigin}/share/${publicToken}?view=goals`, desc: "Share your current goals." },
         { label: "Deep Routine", href: `${shareOrigin}/share/${publicToken}?view=routine`, desc: "Share your weekly deep work routine." },
         { label: "Shutdown report", href: `${shareOrigin}/share/${publicToken}?view=shutdown`, desc: "Share a shutdown/end-of-day view." },
+        { label: "Deep Calendar", href: `${shareOrigin}/share/${publicToken}?view=calendar`, desc: "Share your calendar + bookable low-priority slots." },
       ]
     : [];
   const [creatingToken, setCreatingToken] = useState(false);

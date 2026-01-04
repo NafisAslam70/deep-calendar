@@ -105,6 +105,7 @@ export async function GET(
         color: g.color,
         deadlineISO: g.deadlineISO ?? null,
         parentGoalId: g.parentGoalId ?? null,
+        priority: (g as typeof goals.$inferSelect).priority ?? 0,
       })),
       routine: {
         windows: wins.map((w) => ({

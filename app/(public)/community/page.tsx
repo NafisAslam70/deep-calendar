@@ -12,10 +12,34 @@ type Profile = {
   userName?: string | null;
 };
 
+const ShareIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7" />
+    <path d="M12 16V4" />
+    <path d="m8 8 4-4 4 4" />
+  </svg>
+);
+
+const WhatsIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M20 12a8 8 0 1 1-3.3-6.4L20 4l-.6 3.7A7.96 7.96 0 0 1 20 12Z" />
+    <path d="M8 9c.5 1 1.5 2 2.5 2.5 1 .5 1.5 1 2.5.5l1.5 1.5" />
+  </svg>
+);
+
+const MailIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <rect x="3" y="5" width="18" height="14" rx="2" />
+    <path d="m3 7 9 6 9-6" />
+  </svg>
+);
+
 export default function CommunityPage() {
   const [members, setMembers] = useState<Profile[]>([]);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [publicToken, setPublicToken] = useState<string | null>(null);
+  const [shareOrigin, setShareOrigin] = useState("");
 
   const [optedIn, setOptedIn] = useState(false);
   const [displayName, setDisplayName] = useState("");
@@ -23,6 +47,24 @@ export default function CommunityPage() {
   const [contactWhatsApp, setContactWhatsApp] = useState("");
   const [savingProfile, setSavingProfile] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [profileOpen, setProfileOpen] = useState(false);
+  const shareLinks = publicToken && shareOrigin
+    ? [
+        { label: "Goals", href: `${shareOrigin}/share/${publicToken}?view=goals`, desc: "Share your current goals." },
+        { label: "Deep Routine", href: `${shareOrigin}/share/${publicToken}?view=routine`, desc: "Share your weekly deep work routine." },
+        { label: "Shutdown report", href: `${shareOrigin}/share/${publicToken}?view=shutdown`, desc: "Share a shutdown/end-of-day view." },
+      ]
+    : [];
+  const [creatingToken, setCreatingToken] = useState(false);
+
+  const shareViaWebAPI = async (href: string, title: string) => {
+    if (navigator.share) {
+      try {
+        await navigator.share({ title, url: href, text: `Check this out: ${href}` });
+      } catch {
+        /* ignore */
+      }
+    }
+  };
 
   async function loadData() {
     setLoading(true);
@@ -30,6 +72,7 @@ export default function CommunityPage() {
     const [membersRes, profileRes] = await Promise.all([
       fetch("/api/community/members"),
       fetch("/api/community/profile"),
+      fetch("/api/public/token"),
     ]);
       if (membersRes.ok) {
         const memJson = (await membersRes.json()) as { members?: Profile[] };
@@ -38,6 +81,12 @@ export default function CommunityPage() {
       if (profileRes.ok) {
         const pJson = (await profileRes.json()) as { profile?: Profile | null };
         setProfile(pJson.profile ?? null);
+      }
+      // token handled separately because of tuple length
+      const tokenRes = await fetch("/api/public/token");
+      if (tokenRes.ok) {
+        const { publicKey } = (await tokenRes.json()) as { publicKey: string | null };
+        setPublicToken(publicKey);
       }
     } catch (e) {
     } finally {
@@ -50,6 +99,9 @@ export default function CommunityPage() {
   }, []);
 
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      setShareOrigin(window.location.origin);
+    }
     if (profile) {
       setOptedIn(profile.optedIn);
       setDisplayName(profile.displayName ?? "");
@@ -57,6 +109,20 @@ export default function CommunityPage() {
       setContactWhatsApp(profile.contactWhatsApp ?? "");
     }
   }, [profile]);
+
+  async function ensureToken() {
+    if (publicToken || creatingToken) return;
+    setCreatingToken(true);
+    try {
+      const res = await fetch("/api/public/token", { method: "POST" });
+      if (res.ok) {
+        const { publicKey } = (await res.json()) as { publicKey: string | null };
+        setPublicToken(publicKey);
+      }
+    } finally {
+      setCreatingToken(false);
+    }
+  }
 
   async function saveProfile() {
     setSavingProfile("saving");
@@ -195,6 +261,10 @@ export default function CommunityPage() {
           <h2 className="text-lg font-semibold text-gray-900">Find an accountability partner</h2>
           <span className="text-xs text-gray-600">{members.length} people opted in</span>
         </div>
+        <div className="text-xs text-gray-500 mb-3">
+          Invite them to join DeepWork Community at <span className="font-semibold">https://deep-calendar.vercel.app/</span>
+          {!publicToken && " (Generate a public key below to share your data cards.)"}
+        </div>
         {members.length === 0 ? (
           <p className="text-gray-600">No members visible yet. Opt in above to appear here.</p>
         ) : (
@@ -231,6 +301,79 @@ export default function CommunityPage() {
                   {!m.contactEmail && !m.contactWhatsApp && (
                     <span className="text-xs text-gray-500">No contact info shared</span>
                   )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-3xl border border-gray-200/80 bg-white/90 p-5 shadow-lg backdrop-blur">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-gray-900">Share accountability links</h2>
+          <span className="text-xs text-gray-600">Send a link to a partner</span>
+        </div>
+        {!shareLinks.length ? (
+          <div className="flex items-center justify-between rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-700">
+            <span>Create a public share key to generate cards.</span>
+            <button
+              className="rounded-full border px-3 py-1.5 text-sm font-semibold hover:border-gray-400"
+              onClick={ensureToken}
+              disabled={creatingToken}
+            >
+              {creatingToken ? "Creating…" : "Generate key"}
+            </button>
+          </div>
+        ) : (
+          <div className="grid gap-3 md:grid-cols-3">
+            {shareLinks.map((s) => (
+              <div key={s.href} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <div className="text-sm font-semibold text-gray-900">{s.label}</div>
+                    <div className="text-xs text-gray-600 mt-1">{s.desc}</div>
+                  </div>
+                  <ShareIcon />
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <a
+                    className="rounded-full border px-3 py-1 text-xs font-semibold hover:border-gray-400"
+                    href={s.href}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Open
+                  </a>
+                  <button
+                    className="rounded-full border px-3 py-1 text-xs font-semibold hover:border-gray-400"
+                    onClick={() => navigator.clipboard?.writeText(s.href).catch(() => {})}
+                  >
+                    Copy link
+                  </button>
+                  <button
+                    className="flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-semibold hover:border-gray-400"
+                    onClick={() => {
+                      const text = encodeURIComponent(`Check this: ${s.href}`);
+                      window.open(`https://wa.me/?text=${text}`, "_blank", "noopener,noreferrer");
+                    }}
+                  >
+                    <WhatsIcon /> WhatsApp
+                  </button>
+                  <a
+                    className="flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-semibold hover:border-gray-400"
+                    href={`mailto:?subject=DeepWork accountability&body=${encodeURIComponent(`Take a look: ${s.href}`)}`}
+                  >
+                    <MailIcon /> Email
+                  </a>
+                  <button
+                    className="flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-semibold hover:border-gray-400"
+                    onClick={() => shareViaWebAPI(s.href, s.label)}
+                  >
+                    <ShareIcon /> Share
+                  </button>
+                </div>
+                <div className="mt-2 text-xs text-gray-500">
+                  Invite them to join DeepWork Community at <span className="font-semibold">https://deep-calendar.vercel.app/</span>
                 </div>
               </div>
             ))}

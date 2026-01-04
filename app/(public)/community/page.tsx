@@ -37,7 +37,6 @@ const MailIcon = () => (
 export default function CommunityPage() {
   const [members, setMembers] = useState<Profile[]>([]);
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [loading, setLoading] = useState(true);
   const [publicToken, setPublicToken] = useState<string | null>(null);
   const [shareOrigin, setShareOrigin] = useState("");
 
@@ -67,7 +66,6 @@ export default function CommunityPage() {
   };
 
   async function loadData() {
-    setLoading(true);
     try {
     const [membersRes, profileRes] = await Promise.all([
       fetch("/api/community/members"),
@@ -88,9 +86,7 @@ export default function CommunityPage() {
         const { publicKey } = (await tokenRes.json()) as { publicKey: string | null };
         setPublicToken(publicKey);
       }
-    } catch (e) {
-    } finally {
-      setLoading(false);
+    } catch (_e) {
     }
   }
 

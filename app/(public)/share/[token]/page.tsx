@@ -21,7 +21,8 @@ function minToTime(min: number) {
   return `${h}:${m}`;
 }
 
-export default function SharePage({ params }: { params: { token: string } }) {
+export default function SharePage({ params }: { params: any }) {
+  const token = (params as { token?: string })?.token ?? "";
   const searchParams = useSearchParams();
   const view = (searchParams.get("view") || "goals") as "goals" | "routine" | "shutdown";
   const [data, setData] = useState<Summary | null>(null);
@@ -31,7 +32,7 @@ export default function SharePage({ params }: { params: { token: string } }) {
   useEffect(() => {
     setLoading(true);
     setError(null);
-    fetch(`/api/public/${params.token}/summary?range=30d`)
+    fetch(`/api/public/${token}/summary?range=30d`)
       .then(async (res) => {
         if (!res.ok) throw new Error("Not found");
         return (await res.json()) as Summary;

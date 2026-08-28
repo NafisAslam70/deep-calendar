@@ -445,6 +445,15 @@ export default function GoalsPage() {
       </div>
 
       {(createOpen || snapshotPanelOpen) && (
+      <div className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-black/45 p-4 sm:items-center">
+      <div className="relative my-4 w-full max-w-4xl rounded-3xl bg-white p-4 shadow-2xl sm:p-5">
+        <button
+          className="absolute right-4 top-4 rounded-full border bg-white px-3 py-1 text-sm font-medium hover:border-black"
+          onClick={() => { setCreateOpen(false); setSnapshotPanelOpen(false); }}
+          aria-label="Close"
+        >
+          Close
+        </button>
       <div className="flex flex-col gap-4 lg:flex-row">
         <section className={`rounded-3xl border border-amber-200 bg-amber-50/70 shadow-sm transition-all ${snapshotPanelOpen ? "p-4" : "hidden"}`}>
           {snapshotPanelOpen ? (
@@ -581,6 +590,8 @@ export default function GoalsPage() {
           </div>
         )}
         </section>
+      </div>
+      </div>
       </div>
       )}
 

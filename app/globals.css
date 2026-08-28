@@ -61,19 +61,22 @@ section.rounded-2xl.border,
 }
 
 @keyframes focus-sparkle-border {
-  0% { background-position: 0% 50%, 0% 50%; }
-  50% { background-position: 0% 50%, 100% 50%; }
-  100% { background-position: 0% 50%, 0% 50%; }
+  0% { background-position: 0% 50%, 0% 50%, 0% 50%; }
+  50% { background-position: 0% 50%, 100% 50%, 100% 50%; }
+  100% { background-position: 0% 50%, 0% 50%, 0% 50%; }
 }
 
 .focus-sparkle {
+  position: relative;
+  isolation: isolate;
   border: 3px solid transparent;
   background:
-    linear-gradient(135deg, #fffbeb, #fef3c7) padding-box,
-    linear-gradient(110deg, #f59e0b, #fef08a, #ffffff, #fbbf24, #f59e0b) border-box;
-  background-size: 100% 100%, 250% 100%;
-  box-shadow: 0 0 0 4px rgba(251, 191, 36, 0.18), 0 12px 28px -18px rgba(217, 119, 6, 0.7);
-  animation: focus-sparkle-border 3.2s linear infinite;
+    radial-gradient(circle at 12% 18%, rgba(255,255,255,0.95) 0 1px, transparent 2px),
+    linear-gradient(135deg, #fffdf8 0%, #f8ecd3 52%, #fffaf0 100%) padding-box,
+    linear-gradient(110deg, #9a6b16, #eac35b, #fff7c9, #c58d22, #8d6014) border-box;
+  background-size: 44px 44px, 100% 100%, 280% 100%;
+  box-shadow: 0 0 0 4px rgba(197, 141, 34, 0.13), 0 18px 32px -24px rgba(92, 60, 11, 0.7), inset 0 1px rgba(255,255,255,0.9);
+  animation: focus-sparkle-border 4.8s ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {

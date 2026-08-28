@@ -646,7 +646,7 @@ export default function GoalsPage() {
                         {bucket + 1}
                       </span>
                       <h3 className="text-sm font-semibold">{title}</h3>
-                      {bucket === 0 && <span className="rounded-full bg-amber-300 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-950">Main focus</span>}
+                      {bucket === 0 && <span className="rounded-full border border-amber-300 bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-amber-950 shadow-sm">Main focus</span>}
                     </div>
                     <span className="text-xs text-gray-500">{bucketGoals.length} goal{bucketGoals.length === 1 ? "" : "s"}</span>
                   </div>

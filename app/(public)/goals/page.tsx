@@ -597,9 +597,9 @@ export default function GoalsPage() {
 
       {/* List & Edit */}
       <section className="mt-2 rounded-3xl border border-gray-200/80 bg-white/80 p-4 shadow-lg backdrop-blur">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-lg font-semibold">Your Goals</h2>
-          <div className="flex items-center gap-2">
+        <div className="relative mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="w-full text-center text-lg font-semibold sm:absolute sm:left-1/2 sm:w-auto sm:-translate-x-1/2">Your Goals</h2>
+          <div className="ml-auto flex items-center gap-2">
             <span className="text-xs text-gray-500">Drag goals across lanes; toggle sub-goals per card.</span>
             <button
               className="rounded-full border px-3 py-1.5 text-xs transition hover:border-black/40"
@@ -628,7 +628,7 @@ export default function GoalsPage() {
                   key={title}
                   className={`min-w-[320px] rounded-2xl bg-white/90 shadow-sm ${
                     bucket === 0
-                      ? "border-4 border-amber-500 bg-amber-100 p-5 shadow-md ring-4 ring-amber-200/70"
+                      ? "focus-sparkle p-5 shadow-md"
                       : "border border-gray-200/80 p-4"
                   }`}
                   onDragOver={(e) => {

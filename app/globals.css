@@ -60,6 +60,26 @@ section.rounded-2xl.border,
   box-shadow: 0 24px 60px -40px rgba(0, 0, 0, 0.45);
 }
 
+@keyframes focus-sparkle-border {
+  0% { background-position: 0% 50%, 0% 50%; }
+  50% { background-position: 0% 50%, 100% 50%; }
+  100% { background-position: 0% 50%, 0% 50%; }
+}
+
+.focus-sparkle {
+  border: 3px solid transparent;
+  background:
+    linear-gradient(135deg, #fffbeb, #fef3c7) padding-box,
+    linear-gradient(110deg, #f59e0b, #fef08a, #ffffff, #fbbf24, #f59e0b) border-box;
+  background-size: 100% 100%, 250% 100%;
+  box-shadow: 0 0 0 4px rgba(251, 191, 36, 0.18), 0 12px 28px -18px rgba(217, 119, 6, 0.7);
+  animation: focus-sparkle-border 3.2s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .focus-sparkle { animation: none; }
+}
+
 /* @import "tailwindcss";
 
 :root {

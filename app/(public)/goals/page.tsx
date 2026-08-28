@@ -80,6 +80,7 @@ export default function GoalsPage() {
   const [snapshots, setSnapshots] = useState<PlanSnapshot[]>([]);
   const [snapshotLabel, setSnapshotLabel] = useState("");
   const [snapshotSaving, setSnapshotSaving] = useState(false);
+  const [snapshotPanelOpen, setSnapshotPanelOpen] = useState(false);
   const [openedSnapshot, setOpenedSnapshot] = useState<OpenSnapshot | null>(null);
   const [snapshotLoadingId, setSnapshotLoadingId] = useState<number | null>(null);
   const [gLabel, setGLabel] = useState("");
@@ -424,54 +425,44 @@ export default function GoalsPage() {
         </div>
       </div>
 
-      <section className="rounded-3xl border border-amber-200 bg-amber-50/70 p-4 shadow-sm">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-amber-700">Keep a record</p>
-            <h2 className="text-lg font-semibold text-gray-900">Plan snapshots</h2>
-            <p className="text-sm text-gray-600">Save your current goals and weekly routine before changing them. Saved snapshots never change when you edit your plan.</p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <input
-              className="rounded-full border bg-white px-4 py-2 text-sm"
-              value={snapshotLabel}
-              onChange={(e) => setSnapshotLabel(e.target.value)}
-              placeholder="e.g. August plan"
-              aria-label="Snapshot name"
-            />
-            <button
-              className="rounded-full bg-black px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
-              onClick={saveSnapshot}
-              disabled={snapshotSaving}
-            >
-              {snapshotSaving ? "Saving…" : "Save snapshot"}
-            </button>
-          </div>
-        </div>
-        {snapshots.length > 0 ? (
-          <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {snapshots.map((snapshot) => (
-              <button
-                key={snapshot.id}
-                className="rounded-2xl border border-amber-200 bg-white p-3 text-left text-sm shadow-sm transition hover:border-amber-400 hover:shadow"
-                onClick={() => void openSnapshot(snapshot.id)}
-                disabled={snapshotLoadingId === snapshot.id}
-              >
-                <div className="font-semibold text-gray-900">{snapshotLoadingId === snapshot.id ? "Opening…" : snapshot.label}</div>
-                <div className="mt-1 text-xs text-gray-500">
-                  {new Date(snapshot.createdAt).toLocaleString()} · {snapshot.goalCount} goals · {snapshot.routineBlockCount} routine blocks
+      <div className="flex flex-col gap-4 lg:flex-row">
+        <section className={`rounded-3xl border border-amber-200 bg-amber-50/70 p-4 shadow-sm transition-all lg:shrink-0 ${snapshotPanelOpen ? "lg:w-[36%]" : "lg:w-[10%]"}`}>
+          {snapshotPanelOpen ? (
+            <>
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.2em] text-amber-700">Keep a record</p>
+                  <h2 className="text-lg font-semibold text-gray-900">Plan snapshots</h2>
                 </div>
-                <div className="mt-2 text-xs font-medium text-amber-700">Open saved plan →</div>
-              </button>
-            ))}
-          </div>
-        ) : (
-          <p className="mt-3 text-sm text-gray-600">No snapshots yet. Save one before your next big plan change.</p>
-        )}
-      </section>
+                <button className="rounded-full border px-3 py-1 text-xs" onClick={() => setSnapshotPanelOpen(false)}>Collapse</button>
+              </div>
+              <p className="mt-2 text-sm text-gray-600">Save your current goals and weekly routine before changing them.</p>
+              <div className="mt-3 space-y-2">
+                <input className="w-full rounded-full border bg-white px-4 py-2 text-sm" value={snapshotLabel} onChange={(e) => setSnapshotLabel(e.target.value)} placeholder="e.g. August plan" aria-label="Snapshot name" />
+                <button className="w-full rounded-full bg-black px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" onClick={saveSnapshot} disabled={snapshotSaving}>{snapshotSaving ? "Saving…" : "Save snapshot"}</button>
+              </div>
+              {snapshots.length > 0 ? (
+                <div className="mt-4 space-y-2">
+                  {snapshots.map((snapshot) => (
+                    <button key={snapshot.id} className="w-full rounded-2xl border border-amber-200 bg-white p-3 text-left text-sm shadow-sm transition hover:border-amber-400 hover:shadow" onClick={() => void openSnapshot(snapshot.id)} disabled={snapshotLoadingId === snapshot.id}>
+                      <div className="font-semibold text-gray-900">{snapshotLoadingId === snapshot.id ? "Opening…" : snapshot.label}</div>
+                      <div className="mt-1 text-xs text-gray-500">{new Date(snapshot.createdAt).toLocaleDateString()} · {snapshot.goalCount} goals · {snapshot.routineBlockCount} blocks</div>
+                    </button>
+                  ))}
+                </div>
+              ) : <p className="mt-3 text-sm text-gray-600">No snapshots yet.</p>}
+            </>
+          ) : (
+            <button className="flex h-full w-full flex-col items-center justify-center gap-2 text-center" onClick={() => setSnapshotPanelOpen(true)} aria-label="Expand plan snapshots">
+              <span className="text-xs font-semibold uppercase tracking-[0.16em] text-amber-700 lg:[writing-mode:vertical-rl]">Snapshots</span>
+              <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-amber-200 text-xs font-bold text-amber-900">{snapshots.length}</span>
+              <span className="text-xs text-gray-600 lg:[writing-mode:vertical-rl]">Open</span>
+            </button>
+          )}
+        </section>
 
-      {/* Create */}
-      <section className="rounded-3xl border border-gray-200/80 bg-white/80 p-4 shadow-lg backdrop-blur">
+        {/* Create */}
+        <section className="min-w-0 flex-1 rounded-3xl border border-gray-200/80 bg-white/80 p-4 shadow-lg backdrop-blur">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <div className="space-y-1">
             <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Create</p>
@@ -571,7 +562,8 @@ export default function GoalsPage() {
             )}
           </div>
         )}
-      </section>
+        </section>
+      </div>
 
       {/* List & Edit */}
       <section className="mt-2 rounded-3xl border border-gray-200/80 bg-white/80 p-4 shadow-lg backdrop-blur">

@@ -97,6 +97,17 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   const url = new URL(req.url);
 
   if (slug[0] === "snapshots") {
+    const snapshotId = Number(slug[1]);
+    if (slug[1] !== undefined) {
+      if (!Number.isInteger(snapshotId)) return NextResponse.json({ error: "invalid snapshot id" }, { status: 400 });
+      const [snapshot] = await db
+        .select()
+        .from(planSnapshots)
+        .where(and(eq(planSnapshots.id, snapshotId), eq(planSnapshots.userId, uid)));
+      if (!snapshot) return NextResponse.json({ error: "snapshot not found" }, { status: 404 });
+      return NextResponse.json({ snapshot });
+    }
+
     const snapshots = await db
       .select({
         id: planSnapshots.id,

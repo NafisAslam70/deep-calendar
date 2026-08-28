@@ -20,12 +20,23 @@ type PlanSnapshot = {
   goalCount: number;
   routineBlockCount: number;
 };
+type SnapshotGoal = Goal & { priority?: number | null };
+type OpenSnapshot = {
+  id: number;
+  label: string;
+  createdAt: string;
+  goalsData: SnapshotGoal[];
+  routineData: { items?: Array<{ weekday: number; startMin: number; endMin: number; label?: string | null; goalId?: number | null }>; windows?: unknown[] };
+};
 
 /* Utils */
 const COLORS = ["bg-blue-500", "bg-emerald-500", "bg-amber-500", "bg-fuchsia-500"] as const;
 type Color = typeof COLORS[number];
 function isColor(x: string): x is Color {
   return (COLORS as readonly string[]).includes(x);
+}
+function fromMinutes(minutes: number) {
+  return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 }
 
 type ApiResp<T> = { ok: boolean; status: number; json: T };
@@ -69,6 +80,8 @@ export default function GoalsPage() {
   const [snapshots, setSnapshots] = useState<PlanSnapshot[]>([]);
   const [snapshotLabel, setSnapshotLabel] = useState("");
   const [snapshotSaving, setSnapshotSaving] = useState(false);
+  const [openedSnapshot, setOpenedSnapshot] = useState<OpenSnapshot | null>(null);
+  const [snapshotLoadingId, setSnapshotLoadingId] = useState<number | null>(null);
   const [gLabel, setGLabel] = useState("");
   const [gColor, setGColor] = useState<Color>(COLORS[0]);
   const [gDeadline, setGDeadline] = useState("");
@@ -128,6 +141,13 @@ export default function GoalsPage() {
       await loadSnapshots();
     }
     setSnapshotSaving(false);
+  }
+
+  async function openSnapshot(id: number) {
+    setSnapshotLoadingId(id);
+    const { ok, json } = await apiJson<{ snapshot: OpenSnapshot }>(`/api/deepcal/snapshots/${id}`);
+    if (ok && json.snapshot) setOpenedSnapshot(json.snapshot);
+    setSnapshotLoadingId(null);
   }
 
   const topLevelGoals = useMemo(() => goals.filter((g) => !g.parentGoalId), [goals]);
@@ -431,12 +451,18 @@ export default function GoalsPage() {
         {snapshots.length > 0 ? (
           <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {snapshots.map((snapshot) => (
-              <div key={snapshot.id} className="rounded-2xl border border-amber-200 bg-white p-3 text-sm shadow-sm">
-                <div className="font-semibold text-gray-900">{snapshot.label}</div>
+              <button
+                key={snapshot.id}
+                className="rounded-2xl border border-amber-200 bg-white p-3 text-left text-sm shadow-sm transition hover:border-amber-400 hover:shadow"
+                onClick={() => void openSnapshot(snapshot.id)}
+                disabled={snapshotLoadingId === snapshot.id}
+              >
+                <div className="font-semibold text-gray-900">{snapshotLoadingId === snapshot.id ? "Opening…" : snapshot.label}</div>
                 <div className="mt-1 text-xs text-gray-500">
                   {new Date(snapshot.createdAt).toLocaleString()} · {snapshot.goalCount} goals · {snapshot.routineBlockCount} routine blocks
                 </div>
-              </div>
+                <div className="mt-2 text-xs font-medium text-amber-700">Open saved plan →</div>
+              </button>
             ))}
           </div>
         ) : (
@@ -671,6 +697,83 @@ export default function GoalsPage() {
         onCancel={() => setConfirmOpen(false)}
         onConfirm={() => { confirmActionRef.current?.(); }}
       />
+
+      {openedSnapshot && (() => {
+        const savedGoals = Array.isArray(openedSnapshot.goalsData) ? openedSnapshot.goalsData : [];
+        const byParent = new Map<number, SnapshotGoal[]>();
+        savedGoals.forEach((goal) => {
+          if (goal.parentGoalId != null) byParent.set(goal.parentGoalId, [...(byParent.get(goal.parentGoalId) ?? []), goal]);
+        });
+        const roots = savedGoals.filter((goal) => goal.parentGoalId == null || !savedGoals.some((parent) => parent.id === goal.parentGoalId));
+        const savedGoalById = new Map(savedGoals.map((goal) => [goal.id, goal]));
+        const routineItems = Array.isArray(openedSnapshot.routineData?.items) ? openedSnapshot.routineData.items : [];
+        return (
+          <div className="fixed inset-0 z-50 overflow-y-auto bg-black/50 p-4" role="dialog" aria-modal="true" aria-label="Saved plan snapshot">
+            <div className="mx-auto my-6 w-full max-w-6xl rounded-3xl bg-white p-5 shadow-2xl">
+              <div className="flex flex-wrap items-start justify-between gap-3 border-b pb-4">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.2em] text-amber-700">Read-only saved plan</p>
+                  <h2 className="text-2xl font-bold text-gray-900">{openedSnapshot.label}</h2>
+                  <p className="text-sm text-gray-500">Saved {new Date(openedSnapshot.createdAt).toLocaleString()}</p>
+                </div>
+                <button className="rounded-full border px-4 py-2 text-sm font-medium hover:border-black" onClick={() => setOpenedSnapshot(null)}>Close</button>
+              </div>
+
+              <div className="mt-5">
+                <h3 className="text-lg font-semibold">Goals & priorities</h3>
+                {savedGoals.length === 0 ? <p className="mt-2 text-sm text-gray-500">No goals were saved in this snapshot.</p> : (
+                  <div className="mt-3 grid gap-3 lg:grid-cols-4">
+                    {["First Priority", "Second Priority", "Third Priority", "Least Priority"].map((title, bucket) => (
+                      <div key={title} className="rounded-2xl border bg-gray-50 p-3">
+                        <div className="mb-3 text-sm font-semibold">{title}</div>
+                        <div className="space-y-3">
+                          {roots.filter((goal) => (goal.priority ?? 0) === bucket).map((goal) => (
+                            <div key={goal.id} className="rounded-xl border bg-white p-3 shadow-sm">
+                              <div className="flex items-start gap-2">
+                                <span className={`mt-1 inline-block h-3 w-3 shrink-0 rounded-full ${goal.color || "bg-gray-400"}`} />
+                                <div>
+                                  <div className="font-medium">{goal.label}</div>
+                                  {goal.deadlineISO && <div className="text-xs text-gray-500">Due: {goal.deadlineISO}</div>}
+                                </div>
+                              </div>
+                              {(byParent.get(goal.id) ?? []).length > 0 && (
+                                <div className="mt-3 space-y-2 border-l-2 border-amber-200 pl-3">
+                                  {(byParent.get(goal.id) ?? []).map((child) => (
+                                    <div key={child.id} className="text-sm">
+                                      <span className={`mr-2 inline-block h-2.5 w-2.5 rounded-full ${child.color || "bg-gray-400"}`} />
+                                      {child.label}
+                                      {child.deadlineISO && <span className="ml-2 text-xs text-gray-500">Due: {child.deadlineISO}</span>}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                          {roots.filter((goal) => (goal.priority ?? 0) === bucket).length === 0 && <p className="text-xs text-gray-500">No goals</p>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-6 border-t pt-5">
+                <h3 className="text-lg font-semibold">Saved weekly routine</h3>
+                {routineItems.length === 0 ? <p className="mt-2 text-sm text-gray-500">No routine blocks were saved.</p> : (
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {routineItems.slice().sort((a, b) => a.weekday - b.weekday || a.startMin - b.startMin).map((item, index) => (
+                      <div key={`${item.weekday}-${item.startMin}-${index}`} className="rounded-xl border p-3 text-sm">
+                        <div className="font-medium">{["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][item.weekday]} · {fromMinutes(item.startMin)}–{fromMinutes(item.endMin)}</div>
+                        <div className="mt-1 text-xs text-gray-500">{item.label || savedGoalById.get(item.goalId ?? -1)?.label || "Routine block"}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

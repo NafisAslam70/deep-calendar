@@ -153,10 +153,6 @@ export default function GoalsPage() {
 
   const topLevelGoals = useMemo(() => goals.filter((g) => !g.parentGoalId), [goals]);
   const hasNoGoals = goals.length === 0;
-
-  useEffect(() => {
-    if (hasNoGoals) setCreateOpen(true);
-  }, [hasNoGoals]);
   const childMap = useMemo(() => {
     const m = new Map<number, Goal[]>();
     for (const g of goals) {

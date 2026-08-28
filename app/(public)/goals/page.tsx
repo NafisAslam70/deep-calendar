@@ -412,7 +412,21 @@ export default function GoalsPage() {
             <h1 className="text-3xl font-bold text-gray-900">Goals & Priorities</h1>
             <p className="text-sm text-gray-600">Keep priorities lean, park extras in Least Priority, and nest sub-goals for clarity.</p>
           </div>
-          <a className="rounded-full border px-4 py-2 text-sm font-semibold bg-white/70 shadow hover:shadow-md transition" href="/routine">Open Routine</a>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              className="rounded-full bg-black px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-gray-800"
+              onClick={() => { setCreateOpen(true); setSnapshotPanelOpen(false); }}
+            >
+              Create goal
+            </button>
+            <button
+              className="rounded-full border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-900 shadow-sm transition hover:bg-amber-100"
+              onClick={() => { setSnapshotPanelOpen(true); setCreateOpen(false); }}
+            >
+              Past goals {snapshots.length > 0 ? `(${snapshots.length})` : ""}
+            </button>
+            <a className="rounded-full border px-4 py-2 text-sm font-semibold bg-white/70 shadow hover:shadow-md transition" href="/routine">Open Routine</a>
+          </div>
         </div>
         <div className="mt-4 grid gap-3 sm:grid-cols-3">
           <div className="rounded-2xl border bg-white/70 p-3 shadow-sm">
@@ -430,8 +444,9 @@ export default function GoalsPage() {
         </div>
       </div>
 
+      {(createOpen || snapshotPanelOpen) && (
       <div className="flex flex-col gap-4 lg:flex-row">
-        <section className={`rounded-2xl border border-amber-200 bg-amber-50/70 shadow-sm transition-all lg:shrink-0 ${snapshotPanelOpen ? "p-4 lg:w-[36%]" : "h-11 p-1 lg:w-[10%]"}`}>
+        <section className={`rounded-3xl border border-amber-200 bg-amber-50/70 shadow-sm transition-all ${snapshotPanelOpen ? "p-4" : "hidden"}`}>
           {snapshotPanelOpen ? (
             <>
               <div className="flex items-start justify-between gap-2">
@@ -457,20 +472,12 @@ export default function GoalsPage() {
                 </div>
               ) : <p className="mt-3 text-sm text-gray-600">No snapshots yet.</p>}
             </>
-          ) : (
-            <button className="flex h-full w-full items-center justify-center gap-1 rounded-xl px-2 text-xs font-semibold text-amber-800 hover:bg-amber-100" onClick={() => setSnapshotPanelOpen(true)} aria-label="Open past goal snapshots">
-              <span className="hidden lg:inline">Past</span>
-              <span className="lg:hidden">Past goals</span>
-              <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-200 px-1 text-[11px] font-bold text-amber-900">{snapshots.length}</span>
-            </button>
-          )}
+          ) : null}
         </section>
 
         {/* Create */}
-        <section className={`min-w-0 flex-1 rounded-2xl border bg-white/80 shadow-lg backdrop-blur ${createOpen ? "p-4" : "h-11 p-1"} ${hasNoGoals ? "border-amber-400 ring-2 ring-amber-200" : "border-gray-200/80"}`}>
-        {!createOpen ? (
-          <button className="h-full rounded-xl bg-black px-5 text-sm font-semibold text-white hover:bg-gray-800" onClick={() => setCreateOpen(true)}>Create goal</button>
-        ) : (
+        <section className={`min-w-0 rounded-3xl border bg-white/80 p-4 shadow-lg backdrop-blur ${createOpen ? "" : "hidden"} ${hasNoGoals ? "border-amber-400 ring-2 ring-amber-200" : "border-gray-200/80"}`}>
+        {createOpen ? (
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <div className="space-y-1">
               <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Create</p>
@@ -499,7 +506,7 @@ export default function GoalsPage() {
             </button>
           </div>
           </div>
-        )}
+        ) : null}
 
         {createOpen && (
           <div className="space-y-3 rounded-2xl bg-white/90 p-4 shadow-sm">
@@ -575,6 +582,7 @@ export default function GoalsPage() {
         )}
         </section>
       </div>
+      )}
 
       {/* List & Edit */}
       <section className="mt-2 rounded-3xl border border-gray-200/80 bg-white/80 p-4 shadow-lg backdrop-blur">

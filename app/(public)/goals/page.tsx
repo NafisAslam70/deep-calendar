@@ -431,7 +431,7 @@ export default function GoalsPage() {
       </div>
 
       <div className="flex flex-col gap-4 lg:flex-row">
-        <section className={`rounded-3xl border border-amber-200 bg-amber-50/70 p-4 shadow-sm transition-all lg:shrink-0 ${snapshotPanelOpen ? "lg:w-[36%]" : "lg:w-[10%]"}`}>
+        <section className={`rounded-3xl border border-amber-200 bg-amber-50/70 shadow-sm transition-all lg:shrink-0 ${snapshotPanelOpen ? "p-4 lg:w-[36%]" : "min-h-[64px] p-2 lg:w-[10%]"}`}>
           {snapshotPanelOpen ? (
             <>
               <div className="flex items-start justify-between gap-2">
@@ -467,8 +467,8 @@ export default function GoalsPage() {
         </section>
 
         {/* Create */}
-        <section className={`min-w-0 flex-1 rounded-3xl border bg-white/80 p-4 shadow-lg backdrop-blur ${hasNoGoals ? "border-amber-400 ring-2 ring-amber-200" : "border-gray-200/80"}`}>
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <section className={`min-w-0 flex-1 rounded-3xl border bg-white/80 shadow-lg backdrop-blur ${createOpen ? "p-4" : "min-h-[64px] px-4 py-2"} ${hasNoGoals ? "border-amber-400 ring-2 ring-amber-200" : "border-gray-200/80"}`}>
+        <div className={`${createOpen ? "mb-3" : ""} flex flex-wrap items-center justify-between gap-2`}>
             <div className="space-y-1">
               <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Create</p>
             <div className={`text-sm ${hasNoGoals ? "font-medium text-amber-800" : "text-gray-600"}`}>

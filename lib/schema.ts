@@ -5,6 +5,7 @@ import {
   text,
   timestamp,
   boolean,
+  jsonb,
   smallint,
   index,
   uniqueIndex,
@@ -142,6 +143,24 @@ export const routines = pgTable(
       t.weekday,
       t.orderIndex
     ),
+  })
+);
+
+/* PLAN SNAPSHOTS — immutable copies of a user's goals and weekly routine */
+export const planSnapshots = pgTable(
+  "plan_snapshots",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    label: text("label").notNull(),
+    goalsData: jsonb("goals_data").notNull(),
+    routineData: jsonb("routine_data").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => ({
+    byUserCreated: index("idx_plan_snapshots_user_created").on(t.userId, t.createdAt),
   })
 );
 

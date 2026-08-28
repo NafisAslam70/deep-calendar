@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { goals, routines, routineWindows, days, blocks } from "@/lib/schema";
+import { goals, routines, routineWindows, days, blocks, planSnapshots } from "@/lib/schema";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { verifyToken } from "@/lib/jwt";
 
@@ -95,6 +95,32 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   const { slug: _slug } = await ctx.params;
   const slug = _slug ?? [];
   const url = new URL(req.url);
+
+  if (slug[0] === "snapshots") {
+    const snapshots = await db
+      .select({
+        id: planSnapshots.id,
+        label: planSnapshots.label,
+        createdAt: planSnapshots.createdAt,
+        goalsData: planSnapshots.goalsData,
+        routineData: planSnapshots.routineData,
+      })
+      .from(planSnapshots)
+      .where(eq(planSnapshots.userId, uid))
+      .orderBy(sql`${planSnapshots.createdAt} desc`);
+
+    return NextResponse.json({
+      snapshots: snapshots.map((snapshot) => ({
+        id: snapshot.id,
+        label: snapshot.label,
+        createdAt: snapshot.createdAt,
+        goalCount: Array.isArray(snapshot.goalsData) ? snapshot.goalsData.length : 0,
+        routineBlockCount: Array.isArray((snapshot.routineData as { items?: unknown[] })?.items)
+          ? (snapshot.routineData as { items: unknown[] }).items.length
+          : 0,
+      })),
+    });
+  }
 
   if (slug[0] === "goals") {
     const gs = await db.select().from(goals).where(and(eq(goals.userId, uid), eq(goals.isArchived, false)));
@@ -194,6 +220,29 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   const slug = _slug ?? [];
   const url = new URL(req.url);
   const body = await req.json().catch(() => ({}));
+
+  if (slug[0] === "snapshots") {
+    const label = typeof body?.label === "string" && body.label.trim()
+      ? body.label.trim().slice(0, 120)
+      : `Plan snapshot · ${new Date().toLocaleDateString("en-CA")}`;
+    const activeGoals = await db
+      .select()
+      .from(goals)
+      .where(and(eq(goals.userId, uid), eq(goals.isArchived, false)));
+    const routineItems = await db.select().from(routines).where(eq(routines.userId, uid));
+    const windows = await db.select().from(routineWindows).where(eq(routineWindows.userId, uid));
+    const [snapshot] = await db
+      .insert(planSnapshots)
+      .values({
+        userId: uid,
+        label,
+        goalsData: activeGoals,
+        routineData: { items: routineItems, windows },
+      })
+      .returning({ id: planSnapshots.id, label: planSnapshots.label, createdAt: planSnapshots.createdAt });
+
+    return NextResponse.json({ snapshot }, { status: 201 });
+  }
 
   if (slug[0] === "goals") {
     const { label, color, deadlineISO, parentGoalId } = body || {};

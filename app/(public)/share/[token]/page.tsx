@@ -11,6 +11,7 @@ type Summary = {
   goals: Goal[];
   routine: { windows: RoutineWindow[]; items: RoutineItem[] };
   stats: { range: { from: string; to: string }; byGoal: Array<{ goalId: number; label: string; hours: number; color: string }> };
+  user?: { name?: string | null };
 };
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -35,6 +36,7 @@ export default function SharePage({ params }: { params: ShareParams }) {
     (data?.goals ?? []).forEach((g) => m.set(g.id, g));
     return m;
   }, [data]);
+  const userName = data?.user?.name ?? "my";
 
   useEffect(() => {
     params.then((p) => setToken(p?.token ?? ""));
@@ -161,8 +163,38 @@ export default function SharePage({ params }: { params: ShareParams }) {
           </div>
         </section>
       ) : view === "calendar" ? (
-        <section className="rounded-3xl border border-gray-200/80 bg-white/90 p-5 shadow-lg space-y-3">
-          <h2 className="text-lg font-semibold text-gray-900">Deep Calendar (bookable)</h2>
+        <section className="rounded-3xl border border-gray-200/80 bg-white/90 p-5 shadow-lg space-y-4">
+          <h2 className="text-lg font-semibold text-gray-900">Deep Calendar</h2>
+          <div className="text-sm text-gray-700">Routine blocks tied to goals.</div>
+          <div className="grid gap-3 md:grid-cols-2">
+            {WEEKDAYS.map((w, idx) => {
+              const items = (data.routine.items || []).filter((it) => it.weekday === idx);
+              if (!items.length) return null;
+              const win = data.routine.windows.find((w) => w.weekday === idx);
+              return (
+                <div key={w} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                  <div className="flex items-center justify-between text-sm font-semibold text-gray-900">
+                    <span>{w}</span>
+                    {win ? <span className="text-xs text-gray-600">{minToTime(win.openMin)} - {minToTime(win.closeMin)}</span> : null}
+                  </div>
+                  <div className="mt-2 space-y-1">
+                    {items.map((it, i) => (
+                      <div key={i} className="rounded border border-gray-200 bg-gray-50 px-2 py-1 text-sm text-gray-800 flex flex-col">
+                        <div className="flex items-center justify-between">
+                          <span>{it.label || `Block ${i + 1}`}</span>
+                          <span className="text-xs text-gray-600">{minToTime(it.startMin)}-{minToTime(it.endMin)}</span>
+                        </div>
+                        <div className="text-xs text-gray-600">Goal: {it.goalId ? goalMap.get(it.goalId)?.label ?? `Goal #${it.goalId}` : "None"}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <button className="rounded-full bg-black px-4 py-2 text-sm font-semibold text-white shadow">
+            Book {userName}&apos;s time
+          </button>
           <div className="text-sm text-gray-700">Available low-priority slots (15 min) you can request.</div>
           <div className="grid gap-3 md:grid-cols-2">
             {(() => {
@@ -194,8 +226,7 @@ export default function SharePage({ params }: { params: ShareParams }) {
                   <div className="mt-2 flex gap-2">
                     <a
                       className="rounded-full border px-3 py-1 text-xs font-semibold hover:border-gray-400"
-                      href={`mailto:?subject=Book time&body=${encodeURIComponent(`Can we meet ${WEEKDAYS[s.weekday]} ${minToTime(s.start)}–${minToTime(s.end)}?`)}`
-                      }
+                      href={`mailto:?subject=Book time&body=${encodeURIComponent(`Can we meet ${WEEKDAYS[s.weekday]} ${minToTime(s.start)}–${minToTime(s.end)}?`)}`}
                     >
                       Request via Email
                     </a>

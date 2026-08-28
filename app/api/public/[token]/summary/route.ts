@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { and, eq, gte, lte } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { goals, routines, routineWindows, days, blocks } from "@/lib/schema";
+import { goals, routines, routineWindows, days, blocks, users } from "@/lib/schema";
 import { getUserIdByPublicKey } from "../../_util";
 
 type Depth = 1 | 2 | 3;
@@ -38,6 +38,7 @@ export async function GET(
   const { token } = await ctx.params;
   const uid = await getUserIdByPublicKey(token);
   if (!uid) return NextResponse.json({ error: "not found" }, { status: 404 });
+  const [userRow] = await db.select({ name: users.name }).from(users).where(eq(users.id, uid));
 
   const url = new URL(req.url);
   const { from, to } = parseRange(url);
@@ -98,7 +99,6 @@ export async function GET(
   return NextResponse.json(
     {
       nowUtc: now.toISOString(),
-      user: { name: undefined },
       goals: gs.map((g) => ({
         id: g.id,
         label: g.label,
@@ -107,6 +107,7 @@ export async function GET(
         parentGoalId: g.parentGoalId ?? null,
         priority: (g as typeof goals.$inferSelect).priority ?? 0,
       })),
+      user: { name: userRow?.name ?? null },
       routine: {
         windows: wins.map((w) => ({
           weekday: w.weekday,

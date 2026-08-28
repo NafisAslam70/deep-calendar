@@ -13,6 +13,13 @@ type Goal = {
   parentGoalId?: number | null;
   priority?: number | null;
 };
+type PlanSnapshot = {
+  id: number;
+  label: string;
+  createdAt: string;
+  goalCount: number;
+  routineBlockCount: number;
+};
 
 /* Utils */
 const COLORS = ["bg-blue-500", "bg-emerald-500", "bg-amber-500", "bg-fuchsia-500"] as const;
@@ -59,6 +66,9 @@ export default function GoalsPage() {
   const triedRef = useRef(false);
 
   const [goals, setGoals] = useState<Goal[]>([]);
+  const [snapshots, setSnapshots] = useState<PlanSnapshot[]>([]);
+  const [snapshotLabel, setSnapshotLabel] = useState("");
+  const [snapshotSaving, setSnapshotSaving] = useState(false);
   const [gLabel, setGLabel] = useState("");
   const [gColor, setGColor] = useState<Color>(COLORS[0]);
   const [gDeadline, setGDeadline] = useState("");
@@ -98,8 +108,27 @@ export default function GoalsPage() {
     else if (status === 401) setAuthState("anon");
   }, [authState]);
 
+  const loadSnapshots = useCallback(async () => {
+    const { ok, json } = await apiJson<{ snapshots: PlanSnapshot[] }>("/api/deepcal/snapshots");
+    if (ok) setSnapshots(json.snapshots ?? []);
+  }, []);
+
   useEffect(() => { if (authState === "anon") router.replace(`/auth/signin?next=${encodeURIComponent("/goals")}`); }, [authState, router]);
-  useEffect(() => { void loadMe(); void loadGoals(); }, [loadMe, loadGoals]);
+  useEffect(() => { void loadMe(); void loadGoals(); void loadSnapshots(); }, [loadMe, loadGoals, loadSnapshots]);
+
+  async function saveSnapshot() {
+    setSnapshotSaving(true);
+    const { ok } = await apiJson("/api/deepcal/snapshots", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label: snapshotLabel }),
+    });
+    if (ok) {
+      setSnapshotLabel("");
+      await loadSnapshots();
+    }
+    setSnapshotSaving(false);
+  }
 
   const topLevelGoals = useMemo(() => goals.filter((g) => !g.parentGoalId), [goals]);
   const childMap = useMemo(() => {
@@ -374,6 +403,46 @@ export default function GoalsPage() {
           </div>
         </div>
       </div>
+
+      <section className="rounded-3xl border border-amber-200 bg-amber-50/70 p-4 shadow-sm">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <p className="text-xs uppercase tracking-[0.2em] text-amber-700">Keep a record</p>
+            <h2 className="text-lg font-semibold text-gray-900">Plan snapshots</h2>
+            <p className="text-sm text-gray-600">Save your current goals and weekly routine before changing them. Saved snapshots never change when you edit your plan.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <input
+              className="rounded-full border bg-white px-4 py-2 text-sm"
+              value={snapshotLabel}
+              onChange={(e) => setSnapshotLabel(e.target.value)}
+              placeholder="e.g. August plan"
+              aria-label="Snapshot name"
+            />
+            <button
+              className="rounded-full bg-black px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+              onClick={saveSnapshot}
+              disabled={snapshotSaving}
+            >
+              {snapshotSaving ? "Saving…" : "Save snapshot"}
+            </button>
+          </div>
+        </div>
+        {snapshots.length > 0 ? (
+          <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {snapshots.map((snapshot) => (
+              <div key={snapshot.id} className="rounded-2xl border border-amber-200 bg-white p-3 text-sm shadow-sm">
+                <div className="font-semibold text-gray-900">{snapshot.label}</div>
+                <div className="mt-1 text-xs text-gray-500">
+                  {new Date(snapshot.createdAt).toLocaleString()} · {snapshot.goalCount} goals · {snapshot.routineBlockCount} routine blocks
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-3 text-sm text-gray-600">No snapshots yet. Save one before your next big plan change.</p>
+        )}
+      </section>
 
       {/* Create */}
       <section className="rounded-3xl border border-gray-200/80 bg-white/80 p-4 shadow-lg backdrop-blur">
